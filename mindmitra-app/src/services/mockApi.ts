@@ -27,7 +27,8 @@ export const MockApi = {
       { id: '1', title: 'Conscious Breath', category: 'Mind', duration: '5 min', color: '#FADCDC', icon: 'leaf' },
       { id: '2', title: 'Mind Detox', category: 'Mind', duration: '10 min', color: '#E8E3FA', icon: 'power' },
       { id: '3', title: 'Morning Walk', category: 'Body', duration: '15 min', color: '#D4F0F0', icon: 'walk' },
-      { id: '4', title: 'Gratitude Notes', category: 'Reflect', duration: '10 min', color: '#D2E5EE', icon: 'book' }
+      { id: '4', title: 'Memory Flash', category: 'Reflect', duration: '5 min', color: '#D2E5EE', icon: 'flash' },
+      { id: '5', title: 'Focus Choice', category: 'Reflect', duration: '5 min', color: '#E6F4FE', icon: 'game-controller' }
     ];
   },
   

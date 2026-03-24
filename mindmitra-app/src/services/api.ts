@@ -1,10 +1,37 @@
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 import { globalUserId } from '../contexts/AuthContext';
+import type { UsageSnapshot } from './screenTimeTracker';
+import type { RawLocationPoint, VisitedPlace } from './locationTracker';
 
-// ============================================================
-// 🔧 IMPORTANT: Set this to YOUR machine's Wi-Fi IP address.
-// ============================================================
-const API_BASE_URL = 'http://10.105.151.236:8000';
+const DEFAULT_BACKEND_PORT = 8000;
+
+/**
+ * Resolve backend base URL (no trailing slash).
+ */
+function resolveApiBaseUrl(): string {
+  const fromEnv = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, '');
+
+  const port = DEFAULT_BACKEND_PORT;
+  if (__DEV__) {
+    if (Platform.OS === 'android') {
+      if (Constants.isDevice) {
+        return `http://127.0.0.1:${port}`;
+      }
+      return `http://10.0.2.2:${port}`;
+    }
+    if (Platform.OS === 'ios') {
+      return `http://localhost:${port}`;
+    }
+  }
+  return `http://127.0.0.1:${port}`;
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
+if (__DEV__) {
+  console.log(`[API] Base URL: ${API_BASE_URL} — set EXPO_PUBLIC_API_BASE_URL if requests fail`);
+}
 
 // Generate a persistent session ID for this app launch so memory works across requests
 const SESSION_ID = 'session_' + Math.random().toString(36).substring(2, 9);
@@ -13,6 +40,14 @@ const SESSION_ID = 'session_' + Math.random().toString(36).substring(2, 9);
 const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 15000) => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  if (options.signal) {
+    options.signal.addEventListener('abort', () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    });
+  }
+
   try {
     const response = await fetch(url, { ...options, signal: controller.signal });
     clearTimeout(timeoutId);
@@ -41,31 +76,90 @@ export const ApiService = {
     }
   },
 
-  getDailySummary: async () => {
+  getDailySummary: async (options?: RequestInit) => {
     try {
-      const res = await fetchWithTimeout(`${API_BASE_URL}/daily-summary?user_id=${globalUserId}`);
+      const res = await fetchWithTimeout(`${API_BASE_URL}/daily-summary?user_id=${globalUserId}`, options);
       const data = await res.json();
       return {
         score: data.avg_score ?? 0,
         state: data.state ?? 'Relaxed',
         insight: data.insight ?? "You're doing great, keep up the momentum!"
       };
-    } catch (e) {
-      console.warn('[API] Daily Summary FAILED:', e);
+    } catch (e: any) {
+      if (e.name === 'AbortError') {
+        console.log('[API] Daily Summary request aborted gracefully.');
+      } else {
+        console.warn('[API] Daily Summary FAILED:', e);
+      }
       return { score: 65, state: 'Calm', insight: 'Connect to Wi-Fi to load your live dashboard.' };
     }
   },
 
-  getInsights: async () => {
+  getInsights: async (options?: RequestInit) => {
     try {
-      const res = await fetchWithTimeout(`${API_BASE_URL}/insights?user_id=${globalUserId}`);
+      const res = await fetchWithTimeout(`${API_BASE_URL}/insights?user_id=${globalUserId}`, options);
       const data = await res.json();
       return {
         insights: Array.isArray(data.insights) ? data.insights : []
       };
-    } catch (e) {
-      console.warn('[API] Insights FAILED:', e);
+    } catch (e: any) {
+      if (e.name === 'AbortError') {
+        console.log('[API] Insights request aborted gracefully.');
+      } else {
+        console.warn('[API] Insights FAILED:', e);
+      }
       return { insights: [] };
+    }
+  },
+
+  getLocationInsights: async (options?: RequestInit) => {
+    try {
+      const res = await fetchWithTimeout(`${API_BASE_URL}/location/insights?user_id=${globalUserId}`, options);
+      return await res.json();
+    } catch (e: any) {
+      if (e.name === 'AbortError') {
+        console.log('[API] Location insights request aborted gracefully.');
+      } else {
+        console.warn('[API] Location insights FAILED:', e);
+      }
+      return { timeline: [], frequent_places: [], patterns: {}, totals: {} };
+    }
+  },
+
+  syncScreenTime: async (snapshots: UsageSnapshot[]) => {
+    try {
+      const res = await fetchWithTimeout(`${API_BASE_URL}/screen-time/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: globalUserId,
+          session_id: SESSION_ID,
+          snapshots
+        })
+      });
+      return { ok: res.ok };
+    } catch (e) {
+      console.warn('[API] Screen-time sync FAILED:', e);
+      return { ok: false };
+    }
+  },
+
+  syncLocationData: async (payload: { points: RawLocationPoint[]; visits: VisitedPlace[] }) => {
+    try {
+      const res = await fetchWithTimeout(`${API_BASE_URL}/location/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: globalUserId,
+          session_id: SESSION_ID,
+          points: payload.points,
+          visits: payload.visits
+        })
+      });
+      return { ok: res.ok };
+    } catch (e) {
+      console.warn('[API] Location sync FAILED:', e);
+      return { ok: false };
     }
   },
 

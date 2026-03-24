@@ -5,8 +5,20 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, Quer
 from sqlalchemy.orm import Session
 from datetime import date
 from typing import Optional
+from collections import defaultdict
 from app.db.database import get_db
-from app.models.schemas import ProcessInputRequest, ProcessInputResponse, UserFact, UserProfileCreate
+from app.models.schemas import (
+    ProcessInputRequest,
+    ProcessInputResponse,
+    UserFact,
+    UserProfileCreate,
+    ScreenTimeSyncRequest,
+    LocationSyncRequest,
+    ScreenTimeSnapshot,
+    ScreenTimeAppUsage,
+    LocationPoint,
+    VisitedPlace,
+)
 
 from app.services.memory_service import get_user_memory, extract_and_store_facts, store_conversation, store_cognitive_history, get_daily_summary, extract_user_events, store_user_events
 from app.services.insight_service import generate_and_store_insights, get_recent_insights
@@ -21,6 +33,7 @@ from app.services.cognitive_service import calculate_cognitive_score
 from app.services.time_service import get_time_context
 from app.services.emotion_service import detect_emotion_from_base64
 from pydantic import BaseModel
+from datetime import datetime, timezone
 
 router = APIRouter()
 
@@ -229,3 +242,118 @@ def get_insights_endpoint(user_id: str = Query(...), db: Session = Depends(get_d
     """REST API hook exposing specific human-readable behavioral telemetry insights"""
     insights = get_recent_insights(db, user_id)
     return {"insights": insights}
+
+@router.post("/screen-time/sync")
+def sync_screen_time(payload: ScreenTimeSyncRequest, db: Session = Depends(get_db)):
+    created_snapshots = 0
+    created_app_rows = 0
+    for snap in payload.snapshots:
+        captured_at_dt = datetime.fromtimestamp(snap.capturedAt / 1000, tz=timezone.utc)
+        snapshot_row = ScreenTimeSnapshot(
+            user_id=payload.user_id,
+            session_id=payload.session_id,
+            day=snap.day,
+            captured_at=captured_at_dt,
+            total_screen_time_ms=snap.totalScreenTimeMs,
+            foreground_time_ms=snap.foregroundTimeMs,
+            app_opens=snap.appOpens,
+        )
+        db.add(snapshot_row)
+        db.flush()
+        created_snapshots += 1
+
+        for app in snap.apps:
+            app_row = ScreenTimeAppUsage(
+                snapshot_id=snapshot_row.id,
+                package_name=app.packageName,
+                app_name=app.appName,
+                foreground_time_ms=app.foregroundTimeMs,
+                opens=app.opens,
+                first_timestamp=datetime.fromtimestamp(app.firstTimeStamp / 1000, tz=timezone.utc),
+                last_timestamp=datetime.fromtimestamp(app.lastTimeStamp / 1000, tz=timezone.utc),
+            )
+            db.add(app_row)
+            created_app_rows += 1
+
+    db.commit()
+    return {"ok": True, "created_snapshots": created_snapshots, "created_app_rows": created_app_rows}
+
+@router.post("/location/sync")
+def sync_location(payload: LocationSyncRequest, db: Session = Depends(get_db)):
+    created_points = 0
+    created_visits = 0
+
+    for point in payload.points:
+        point_row = LocationPoint(
+            user_id=payload.user_id,
+            session_id=payload.session_id,
+            latitude=point.latitude,
+            longitude=point.longitude,
+            timestamp=datetime.fromtimestamp(point.timestamp / 1000, tz=timezone.utc),
+        )
+        db.add(point_row)
+        created_points += 1
+
+    for visit in payload.visits:
+        visit_row = VisitedPlace(
+            user_id=payload.user_id,
+            session_id=payload.session_id,
+            place_name=visit.placeName,
+            category=visit.category,
+            latitude=visit.latitude,
+            longitude=visit.longitude,
+            entry_time=datetime.fromtimestamp(visit.entryTime / 1000, tz=timezone.utc),
+            exit_time=datetime.fromtimestamp(visit.exitTime / 1000, tz=timezone.utc),
+            duration_ms=visit.durationMs,
+        )
+        db.add(visit_row)
+        created_visits += 1
+
+    db.commit()
+    return {"ok": True, "created_points": created_points, "created_visits": created_visits}
+
+@router.get("/location/insights")
+def get_location_insights_endpoint(user_id: str = Query(...), limit: int = Query(default=50, ge=1, le=500), db: Session = Depends(get_db)):
+    visits = (
+        db.query(VisitedPlace)
+        .filter(VisitedPlace.user_id == user_id)
+        .order_by(VisitedPlace.entry_time.desc())
+        .limit(limit)
+        .all()
+    )
+
+    timeline = [
+        {
+            "time": v.entry_time.isoformat(),
+            "place": v.place_name,
+            "category": v.category,
+            "duration_ms": v.duration_ms,
+        }
+        for v in reversed(visits)
+    ]
+
+    freq = defaultdict(lambda: {"place_name": "", "category": "", "visits": 0, "total_duration_ms": 0})
+    for v in visits:
+        key = f"{v.place_name}|{v.category}"
+        freq[key]["place_name"] = v.place_name
+        freq[key]["category"] = v.category
+        freq[key]["visits"] += 1
+        freq[key]["total_duration_ms"] += v.duration_ms
+
+    frequent_places = sorted(freq.values(), key=lambda x: (x["visits"], x["total_duration_ms"]), reverse=True)[:5]
+    park_visits = sum(1 for v in visits if v.category == "park")
+    off_hour_visits = sum(1 for v in visits if v.entry_time.hour <= 5 or v.entry_time.hour >= 23)
+
+    return {
+        "timeline": timeline,
+        "frequent_places": frequent_places,
+        "patterns": {
+            "lack_of_outdoor_activity": park_visits < 2,
+            "irregular_movement": off_hour_visits > 0,
+            "stress_correlation_hint": "Frequent visits to crowded indoor places may correlate with stress. Compare with mood logs for confidence."
+        },
+        "totals": {
+            "visits_analyzed": len(visits),
+            "park_visits": park_visits
+        }
+    }

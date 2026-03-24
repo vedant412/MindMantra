@@ -8,7 +8,26 @@ export const HomeScreen = ({ navigation }: any) => {
   const [data, setData] = useState<any>(null);
 
   useEffect(() => {
-    ApiService.getDailySummary().then(setData);
+    let isMounted = true;
+    const controller = new AbortController();
+
+    const fetchData = async () => {
+      try {
+        const result = await ApiService.getDailySummary({ signal: controller.signal });
+        if (isMounted) {
+          setData(result);
+        }
+      } catch (error) {
+        // Errors are gracefully handled in ApiService
+      }
+    };
+
+    fetchData();
+
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
   }, []);
 
   const getGreeting = () => {
