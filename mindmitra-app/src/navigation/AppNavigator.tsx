@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Orb } from '../components/Orb';
 import { colors } from '../theme/theme';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
+import { ActivityProvider } from '../contexts/ActivityContext';
 
 // Layout Imports
 import { LoginScreen } from '../screens/LoginScreen';
@@ -33,7 +34,9 @@ const TalkButton = ({ children, onPress }: any) => (
 export const AppNavigator = () => {
   return (
     <AuthProvider>
-      <MainApp />
+      <ActivityProvider>
+        <MainApp />
+      </ActivityProvider>
     </AuthProvider>
   );
 };
