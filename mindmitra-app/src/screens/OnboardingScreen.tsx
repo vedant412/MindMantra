@@ -4,12 +4,21 @@ import { colors } from '../theme/theme';
 import { useAuth } from '../contexts/AuthContext';
 import { ApiService } from '../services/api';
 
-const QUESTIONS = [
+type QuestionDef = {
+  id: string;
+  title: string;
+  placeholder?: string;
+  options?: string[];
+};
+
+const QUESTIONS: QuestionDef[] = [
   { id: 'name', title: 'What should Vani call you?', placeholder: 'Your name' },
-  { id: 'stress', title: 'How would you describe your stress level lately?', placeholder: 'e.g., quite high, mostly relaxed...' },
-  { id: 'sleep', title: 'How many hours of sleep do you usually get?', placeholder: 'e.g., 6 hours' },
-  { id: 'goals', title: 'What is your primary wellness goal?', placeholder: 'e.g., reduce anxiety, sleep better' },
-  { id: 'triggers', title: 'Are there times you feel most overwhelmed?', placeholder: 'e.g., at work, late at night' },
+  { id: 'age', title: 'How old are you?', placeholder: 'e.g., 24' },
+  { id: 'gender', title: 'What is your gender?', options: ['Male', 'Female', 'Non-binary', 'Prefer not to say'] },
+  { id: 'stress', title: 'How would you describe your stress level lately?', options: ['Very Low', 'Manageable', 'Quite High', 'Overwhelming'] },
+  { id: 'sleep', title: 'How many hours of sleep do you usually get?', options: ['Less than 5 hours', '5-6 hours', '7-8 hours', '9+ hours'] },
+  { id: 'goals', title: 'What is your primary wellness goal?', options: ['Reduce anxiety', 'Improve sleep', 'Better focus', 'Emotional balance'] },
+  { id: 'triggers', title: 'Are there times you feel most overwhelmed?', options: ['During work/study', 'Late at night', 'Social situations', 'Randomly'] },
 ];
 
 export const OnboardingScreen = () => {
@@ -22,19 +31,18 @@ export const OnboardingScreen = () => {
   
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
-  const handleNext = () => {
-    if (!currentText.trim()) return;
+  const handleNext = (overrideAnswer?: string) => {
+    const finalAnswer = overrideAnswer || currentText;
+    if (!finalAnswer.trim()) return;
 
     const currentKey = QUESTIONS[step].id;
-    const newAnswers = { ...answers, [currentKey]: currentText.trim() };
+    const newAnswers = { ...answers, [currentKey]: finalAnswer.trim() };
     setAnswers(newAnswers);
 
     if (step < QUESTIONS.length - 1) {
-      // Fade out
       Animated.timing(fadeAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
         setStep(step + 1);
         setCurrentText('');
-        // Fade in
         Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
       });
     } else {
@@ -63,26 +71,47 @@ export const OnboardingScreen = () => {
 
       <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
         <Text style={styles.title}>{q.title}</Text>
-        <TextInput
-          style={styles.input}
-          placeholder={q.placeholder}
-          placeholderTextColor={colors.subText + '80'}
-          value={currentText}
-          onChangeText={setCurrentText}
-          autoFocus={true}
-          returnKeyType={step === QUESTIONS.length - 1 ? 'done' : 'next'}
-          onSubmitEditing={handleNext}
-        />
         
-        <TouchableOpacity 
-          style={[styles.btn, !currentText.trim() && styles.btnDisabled]} 
-          onPress={handleNext}
-          disabled={!currentText.trim() || saving}
-        >
-          <Text style={styles.btnText}>
-            {saving ? 'Creating Profile...' : (step === QUESTIONS.length - 1 ? 'Get Started' : 'Continue')}
-          </Text>
-        </TouchableOpacity>
+        {q.options ? (
+          <View style={styles.optionsContainer}>
+            {q.options.map(opt => (
+              <TouchableOpacity 
+                key={opt}
+                style={[styles.optionCard, currentText === opt && styles.optionCardActive]}
+                onPress={() => {
+                  setCurrentText(opt);
+                  // Optional: Auto-advance after 300ms for MCQ
+                  setTimeout(() => handleNext(opt), 300);
+                }}
+              >
+                <Text style={[styles.optionText, currentText === opt && styles.optionTextActive]}>{opt}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : (
+          <TextInput
+            style={styles.input}
+            placeholder={q.placeholder}
+            placeholderTextColor={colors.subText + '80'}
+            value={currentText}
+            onChangeText={setCurrentText}
+            autoFocus={true}
+            returnKeyType={step === QUESTIONS.length - 1 ? 'done' : 'next'}
+            onSubmitEditing={() => handleNext()}
+          />
+        )}
+        
+        {!q.options && (
+          <TouchableOpacity 
+            style={[styles.btn, !currentText.trim() && styles.btnDisabled]} 
+            onPress={() => handleNext()}
+            disabled={!currentText.trim() || saving}
+          >
+            <Text style={styles.btnText}>
+              {saving ? 'Creating Profile...' : (step === QUESTIONS.length - 1 ? 'Get Started' : 'Continue')}
+            </Text>
+          </TouchableOpacity>
+        )}
       </Animated.View>
     </KeyboardAvoidingView>
   );
@@ -95,8 +124,13 @@ const styles = StyleSheet.create({
   progressDotActive: { backgroundColor: colors.accent },
   content: { flex: 1, justifyContent: 'center' },
   title: { fontSize: 28, fontWeight: '700', color: colors.text, marginBottom: 40, lineHeight: 38 },
-  input: { fontSize: 22, color: colors.primary, borderBottomWidth: 2, borderBottomColor: colors.primary, paddingVertical: 10, marginBottom: 50 },
-  btn: { backgroundColor: colors.primary, paddingVertical: 18, borderRadius: 16, alignItems: 'center' },
-  btnDisabled: { backgroundColor: colors.border },
-  btnText: { color: colors.background, fontWeight: '700', fontSize: 18 }
+  input: { fontSize: 24, color: colors.primary, borderBottomWidth: 2, borderBottomColor: colors.primary, paddingVertical: 10, marginBottom: 50, fontWeight: '500' },
+  optionsContainer: { gap: 12 },
+  optionCard: { backgroundColor: colors.card, paddingVertical: 20, paddingHorizontal: 24, borderRadius: 16, borderWidth: 1, borderColor: colors.border, flexDirection: 'row', alignItems: 'center' },
+  optionCardActive: { borderColor: colors.primary, backgroundColor: colors.primary + '10' },
+  optionText: { fontSize: 18, color: colors.text, fontWeight: '500' },
+  optionTextActive: { color: colors.primary, fontWeight: '700' },
+  btn: { backgroundColor: colors.primary, paddingVertical: 18, borderRadius: 16, alignItems: 'center', shadowColor: colors.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 5 },
+  btnDisabled: { backgroundColor: colors.border, shadowOpacity: 0, elevation: 0 },
+  btnText: { color: colors.background, fontWeight: '700', fontSize: 18, letterSpacing: 0.5 }
 });

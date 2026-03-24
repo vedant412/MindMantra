@@ -103,18 +103,18 @@ export const LoginScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background, padding: 30, justifyContent: 'center' },
-  title: { fontSize: 36, fontWeight: '800', color: colors.primary, marginBottom: 10 },
-  subtitle: { fontSize: 16, color: colors.subText, marginBottom: 50, lineHeight: 24 },
-  card: { backgroundColor: colors.card, padding: 25, borderRadius: 24, elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 10 },
-  input: { borderBottomWidth: 1, borderBottomColor: colors.border, paddingVertical: 15, fontSize: 16, color: colors.text, marginBottom: 20 },
-  authButton: { backgroundColor: colors.accent, paddingVertical: 16, borderRadius: 12, alignItems: 'center', marginTop: 10 },
-  authButtonText: { color: colors.background, fontWeight: '700', fontSize: 16 },
-  toggleBtn: { marginTop: 25, alignItems: 'center' },
-  toggleText: { color: colors.subText, fontSize: 14, fontWeight: '500' },
-  errorText: { color: '#E57373', marginBottom: 15, fontSize: 14, textAlign: 'center' },
-  mockContainer: { marginTop: 30, alignItems: 'center', paddingTop: 20, borderTopWidth: 1, borderTopColor: colors.border },
-  mockText: { color: colors.subText, marginBottom: 10, fontStyle: 'italic' },
-  mockButton: { backgroundColor: colors.pastel.yellow, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 12 },
-  mockButtonText: { color: colors.text, fontWeight: '600' }
+  container: { flex: 1, backgroundColor: colors.background, padding: 32, justifyContent: 'center' },
+  title: { fontSize: 40, fontWeight: '800', color: colors.primary, marginBottom: 8, letterSpacing: -0.5 },
+  subtitle: { fontSize: 16, color: colors.subText, marginBottom: 40, lineHeight: 24, fontWeight: '400', paddingRight: 20 },
+  card: { backgroundColor: colors.card, padding: 28, borderRadius: 28, elevation: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.08, shadowRadius: 24 },
+  input: { borderBottomWidth: 1.5, borderBottomColor: colors.border, paddingVertical: 16, fontSize: 17, color: colors.text, marginBottom: 24, fontWeight: '500' },
+  authButton: { backgroundColor: colors.accent, paddingVertical: 18, borderRadius: 16, alignItems: 'center', marginTop: 12, shadowColor: colors.accent, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10, elevation: 6 },
+  authButtonText: { color: colors.background, fontWeight: '800', fontSize: 17, letterSpacing: 0.5 },
+  toggleBtn: { marginTop: 28, alignItems: 'center' },
+  toggleText: { color: colors.primary, fontSize: 15, fontWeight: '600' },
+  errorText: { color: '#FF3B30', marginBottom: 16, fontSize: 14, textAlign: 'center', fontWeight: '500', backgroundColor: '#FF3B3015', padding: 10, borderRadius: 8 },
+  mockContainer: { marginTop: 32, alignItems: 'center', paddingTop: 24, borderTopWidth: 1, borderTopColor: colors.border },
+  mockText: { color: colors.subText, marginBottom: 16, fontSize: 14, textAlign: 'center', lineHeight: 20 },
+  mockButton: { backgroundColor: colors.pastel.yellow, paddingVertical: 14, paddingHorizontal: 24, borderRadius: 14, width: '100%', alignItems: 'center' },
+  mockButtonText: { color: colors.text, fontWeight: '700', fontSize: 15 }
 });
