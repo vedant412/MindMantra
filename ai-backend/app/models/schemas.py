@@ -77,6 +77,14 @@ class ProcessInputRequest(BaseModel):
     session_id: str
     text: str
 
+class UserProfileCreate(BaseModel):
+    user_id: str
+    name: Optional[str] = None
+    stress: Optional[str] = None
+    sleep: Optional[str] = None
+    goals: Optional[str] = None
+    triggers: Optional[str] = None
+
 class ProcessInputResponse(BaseModel):
     response: str
     audio_url: Optional[str] = None

@@ -1,11 +1,14 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { View, StyleSheet, TouchableOpacity, Text } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Text, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Orb } from '../components/Orb';
 import { colors } from '../theme/theme';
+import { AuthProvider, useAuth } from '../contexts/AuthContext';
 
 // Layout Imports
+import { LoginScreen } from '../screens/LoginScreen';
+import { OnboardingScreen } from '../screens/OnboardingScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { ActivitiesScreen } from '../screens/ActivitiesScreen';
 import { TalkScreen } from '../screens/TalkScreen';
@@ -28,6 +31,27 @@ const TalkButton = ({ children, onPress }: any) => (
 );
 
 export const AppNavigator = () => {
+  return (
+    <AuthProvider>
+      <MainApp />
+    </AuthProvider>
+  );
+};
+
+const MainApp = () => {
+  const { user, loading, hasCompletedOnboarding } = useAuth();
+  
+  if (loading) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
+
+  if (!user) return <LoginScreen />;
+  if (user && !hasCompletedOnboarding) return <OnboardingScreen />;
+
   return (
     <Tab.Navigator
       screenOptions={{
@@ -60,12 +84,12 @@ export const AppNavigator = () => {
       <Tab.Screen 
         name="Home" 
         component={HomeScreen} 
-        options={{ tabBarIcon: ({ color }) => <Ionicons name="home" size={26} color={color} /> }}
+        options={{ tabBarIcon: ({ color }: { color: string }) => <Ionicons name="home" size={26} color={color} /> }}
       />
       <Tab.Screen 
         name="Activities" 
         component={ActivitiesScreen} 
-        options={{ tabBarIcon: ({ color }) => <Ionicons name="leaf" size={26} color={color} /> }}
+        options={{ tabBarIcon: ({ color }: { color: string }) => <Ionicons name="leaf" size={26} color={color} /> }}
       />
       <Tab.Screen 
         name="Talk" 
@@ -73,18 +97,18 @@ export const AppNavigator = () => {
         options={{
           tabBarLabel: () => null,
           tabBarIcon: () => <Orb size={48} />,
-          tabBarButton: (props) => <TalkButton {...props} />
+          tabBarButton: (props: any) => <TalkButton {...props} />
         }}
       />
       <Tab.Screen 
         name="Insights" 
         component={InsightsScreen} 
-        options={{ tabBarIcon: ({ color }) => <Ionicons name="stats-chart" size={26} color={color} /> }}
+        options={{ tabBarIcon: ({ color }: { color: string }) => <Ionicons name="stats-chart" size={26} color={color} /> }}
       />
       <Tab.Screen 
         name="Profile" 
         component={ProfileScreen} 
-        options={{ tabBarIcon: ({ color }) => <Ionicons name="person" size={26} color={color} /> }}
+        options={{ tabBarIcon: ({ color }: { color: string }) => <Ionicons name="person" size={26} color={color} /> }}
       />
     </Tab.Navigator>
   );

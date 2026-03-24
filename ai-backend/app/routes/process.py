@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from datetime import date
 from typing import Optional
 from app.db.database import get_db
-from app.models.schemas import ProcessInputRequest, ProcessInputResponse
+from app.models.schemas import ProcessInputRequest, ProcessInputResponse, UserFact, UserProfileCreate
 
 from app.services.memory_service import get_user_memory, extract_and_store_facts, store_conversation, store_cognitive_history, get_daily_summary, extract_user_events, store_user_events
 from app.services.insight_service import generate_and_store_insights, get_recent_insights
@@ -31,6 +31,28 @@ class EmotionRequest(BaseModel):
 async def detect_emotion(req: EmotionRequest):
     result = detect_emotion_from_base64(req.image_b64)
     return result
+
+@router.post("/user-profile")
+async def create_user_profile(profile: UserProfileCreate, db: Session = Depends(get_db)):
+    facts = {
+        "Name": profile.name,
+        "General Stress Level": profile.stress,
+        "Sleep Habits": profile.sleep,
+        "Wellness Goals": profile.goals,
+        "Overwhelm Triggers": profile.triggers
+    }
+    
+    for key, value in facts.items():
+        if value:
+            existing = db.query(UserFact).filter(UserFact.user_id == profile.user_id, UserFact.key == key).first()
+            if existing:
+                existing.value = value
+            else:
+                new_fact = UserFact(user_id=profile.user_id, key=key, value=value)
+                db.add(new_fact)
+                
+    db.commit()
+    return {"status": "success"}
 
 @router.post("/process-input", response_model=ProcessInputResponse)
 async def process_input(request: Request, db: Session = Depends(get_db)):

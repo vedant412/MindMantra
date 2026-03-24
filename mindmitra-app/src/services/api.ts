@@ -1,11 +1,11 @@
 import { Platform } from 'react-native';
+import { globalUserId } from '../contexts/AuthContext';
 
 // ============================================================
 // 🔧 IMPORTANT: Set this to YOUR machine's Wi-Fi IP address.
 // ============================================================
 const API_BASE_URL = 'http://172.22.47.56';
 
-const USER_ID = 'user_123';
 // Generate a persistent session ID for this app launch so memory works across requests
 const SESSION_ID = 'session_' + Math.random().toString(36).substring(2, 9);
 
@@ -24,9 +24,26 @@ const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutM
 };
 
 export const ApiService = {
+  submitUserProfile: async (profileData: any) => {
+    try {
+      const res = await fetchWithTimeout(`${API_BASE_URL}/user-profile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: globalUserId,
+          ...profileData
+        })
+      });
+      return res.ok;
+    } catch (e) {
+      console.warn('[API] Submit Profile FAILED:', e);
+      return false;
+    }
+  },
+
   getDailySummary: async () => {
     try {
-      const res = await fetchWithTimeout(`${API_BASE_URL}/daily-summary?user_id=${USER_ID}`);
+      const res = await fetchWithTimeout(`${API_BASE_URL}/daily-summary?user_id=${globalUserId}`);
       const data = await res.json();
       return {
         score: data.avg_score ?? 0,
@@ -41,7 +58,7 @@ export const ApiService = {
 
   getInsights: async () => {
     try {
-      const res = await fetchWithTimeout(`${API_BASE_URL}/insights?user_id=${USER_ID}`);
+      const res = await fetchWithTimeout(`${API_BASE_URL}/insights?user_id=${globalUserId}`);
       const data = await res.json();
       return {
         insights: Array.isArray(data.insights) ? data.insights : []
@@ -75,7 +92,7 @@ export const ApiService = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: USER_ID,
+          user_id: globalUserId,
           session_id: SESSION_ID,
           text: text,
           emotion: emotion
@@ -106,7 +123,7 @@ export const ApiService = {
 
   sendAudioInput: async (audioUri: string, emotion: string = 'neutral') => {
     const formData = new FormData();
-    formData.append('user_id', USER_ID);
+    formData.append('user_id', globalUserId);
     formData.append('session_id', SESSION_ID);
     formData.append('emotion', emotion);
     
