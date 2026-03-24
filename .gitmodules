@@ -1,0 +1,3 @@
+[submodule "ai-backend"]
+	path = ai-backend
+	url = https://github.com/PawarVish/RIT_COGNITIVE_HEALTH_APP.git
