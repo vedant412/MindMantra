@@ -114,6 +114,10 @@ async def text_to_speech(text: str, emotion: str = None) -> str:
         rate=rate,
         pitch=pitch
     )
-    await communicate.save(file_path)
     
-    return f"/audio/{filename}"
+    try:
+        await communicate.save(file_path)
+        return f"/audio/{filename}"
+    except Exception as e:
+        print(f"TTS Engine Error (Network/DNS): {e}")
+        return None
