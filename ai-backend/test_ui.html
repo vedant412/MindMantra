@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vani - Cognitive Health Assistant</title>
+    <!-- Load face-api.js -->
+    <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+    <style>
+        :root {
+            --primary: #4a90e2;
+            --bg: #f5f7fa;
+            --chat-bg: #fff;
+            --text: #333;
+            --border: #e1e4e8;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 {
+            margin-bottom: 5px;
+            color: var(--primary);
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 500px;
+            background: var(--chat-bg);
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 70vh;
+        }
+
+        .chat-area {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 16px;
+            line-height: 1.4;
+            font-size: 15px;
+        }
+
+        .msg-user {
+            align-self: flex-end;
+            background-color: var(--primary);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .msg-ai {
+            align-self: flex-start;
+            background-color: #f0f2f5;
+            color: var(--text);
+            border-bottom-left-radius: 4px;
+            border: 1px solid var(--border);
+        }
+
+        .controls {
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            background: var(--chat-bg);
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 30px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.1s, opacity 0.2s;
+        }
+
+        button:active {
+            transform: scale(0.96);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-record {
+            background-color: #4a90e2;
+            color: white;
+        }
+
+        .btn-stop {
+            background-color: #ff4757;
+            color: white;
+            display: none;
+        }
+
+        .status {
+            text-align: center;
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 5px;
+            height: 20px;
+            font-weight: 600;
+        }
+
+        .volume-meter {
+            width: 80%;
+            height: 8px;
+            background: #eee;
+            border-radius: 4px;
+            margin: 0 auto 15px auto;
+            overflow: hidden;
+        }
+
+        .volume-bar {
+            height: 100%;
+            width: 0%;
+            background: #2ed573;
+            transition: width 0.05s ease-out;
+        }
+
+        /* Video Container for Face Tracking */
+        .video-container {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 140px;
+            height: 105px;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            background: #222;
+        }
+
+        #webcam {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .emotion-badge {
+            position: absolute;
+            bottom: 6px;
+            right: 6px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #fff;
+            font-size: 11px;
+            padding: 3px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Webcam UI -->
+    <div class="video-container">
+        <video id="webcam" autoplay muted playsinline></video>
+        <div class="emotion-badge" id="emotionBadge">Awaiting Camera...</div>
+    </div>
+
+    <h1>Chat with Vani</h1>
+    <div class="subtitle">Live System (VAD + Emotion AI)</div>
+
+    <div style="margin-bottom: 20px; text-align: center;">
+        <label for="userIdInput" style="font-weight: 600;">User ID:</label>
+        <input type="text" id="userIdInput" value="test_user_1"
+            style="padding: 8px; border-radius: 6px; border: 1px solid var(--border); margin-left: 10px; width: 150px;">
+    </div>
+
+    <div class="container">
+        <div class="chat-area" id="chatArea">
+            <div class="message msg-ai">Hi! I am Vani. We can now talk completely hands-free! Just hit "Start
+                Conversation" and speak naturally. I will stop listening and reply when you pause. I am also currently
+                analyzing your facial expressions to better understand you!</div>
+        </div>
+
+        <div class="status" id="statusText">Ready</div>
+        <div class="volume-meter">
+            <div class="volume-bar" id="volumeBar"></div>
+        </div>
+
+        <div class="controls">
+            <button id="btnStart" class="btn-record">Start Conversation</button>
+            <button id="btnStop" class="btn-stop">Stop Conversation</button>
+        </div>
+    </div>
+
+    <!-- Visible audio element for AI response -->
+    <div style="margin-top: 20px;">
+        <audio id="audioPlayer" controls></audio>
+    </div>
+
+    <script>
+        // Constants & IDs
+        const BACKEND_URL = window.location.origin;
+        const SESSION_ID = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+
+        const MODEL_URL = 'https://justadudewhohacks.github.io/face-api.js/models';
+
+        // VAD Config
+        const SPEECH_THRESHOLD = 0.02;
+        const SILENCE_DURATION = 1500;
+        const MIN_SPEECH_DURATION = 300;
+        const HISTORY_SIZE = 10;
+
+        // Core State
+        let audioContext;
+        let analyser;
+        let microphone;
+        let mediaRecorder;
+        let audioChunks = [];
+        let rAF_ID = null;
+
+        // VAD State Machine
+        let isConversing = false;
+        let isWaitingForAPI = false;
+        let isSpeakingAPI = false;
+        let vadState = 'idle'; // 'idle', 'speaking'
+        let energyHistory = [];
+        let speechStartTime = 0;
+        let silenceStartTime = 0;
+        let discardNextRecord = false;
+
+        // Emotion State
+        let currentEmotion = 'neutral';
+        let faceTrackingInterval = null;
+
+        // DOM Elements
+        const btnStart = document.getElementById('btnStart');
+        const btnStop = document.getElementById('btnStop');
+        const statusText = document.getElementById('statusText');
+        const volumeBar = document.getElementById('volumeBar');
+        const chatArea = document.getElementById('chatArea');
+        const audioPlayer = document.getElementById('audioPlayer');
+        const webcam = document.getElementById('webcam');
+        const emotionBadge = document.getElementById('emotionBadge');
+
+        // Helpers
+        function appendMessage(sender, text) {
+            const msgDiv = document.createElement('div');
+            msgDiv.classList.add('message');
+            msgDiv.classList.add(sender === 'Vani' ? 'msg-ai' : 'msg-user');
+            msgDiv.innerText = text;
+            chatArea.appendChild(msgDiv);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        // --- Emotion Integration ---
+        async function detectEmotion() {
+            if (!webcam.srcObject || webcam.paused) return;
+
+            // Explicitly try/catch offline CDN issues
+            try {
+                const detections = await faceapi.detectSingleFace(webcam, new faceapi.TinyFaceDetectorOptions()).withFaceExpressions();
+                if (detections) {
+                    let dominant = 'neutral';
+                    let maxVal = 0;
+                    for (const [emotion, value] of Object.entries(detections.expressions)) {
+                        if (value > maxVal) { maxVal = value; dominant = emotion; }
+                    }
+
+                    // Map face-api strings to backend schema
+                    if (dominant === 'happy') currentEmotion = 'positive';
+                    else if (dominant === 'sad' || dominant === 'angry' || dominant === 'fear' || dominant === 'disgusted') currentEmotion = 'stressed';
+                    else currentEmotion = 'normal'; // 'neutral' or 'surprised'
+
+                    emotionBadge.innerText = `Face: ${currentEmotion}`;
+                } else {
+                    emotionBadge.innerText = 'Face Lost';
+                }
+            } catch (e) { }
+        }
+
+        // --- VAD Math Functions ---
+        function calculateRMS(dataArray) {
+            let sumSquares = 0.0;
+            for (let i = 0; i < dataArray.length; i++) {
+                sumSquares += dataArray[i] * dataArray[i];
+            }
+            return Math.sqrt(sumSquares / dataArray.length);
+        }
+
+        function smoothEnergy(rms) {
+            energyHistory.push(rms);
+            if (energyHistory.length > HISTORY_SIZE) {
+                energyHistory.shift();
+            }
+            let sum = 0;
+            for (let i = 0; i < energyHistory.length; i++) {
+                sum += energyHistory[i];
+            }
+            return sum / energyHistory.length;
+        }
+
+        // --- Core Application Logic ---
+        async function initHardware() {
+            if (audioContext && webcam.srcObject) return; // already initted
+
+            try {
+                // Initialize Video Frame models FIRST without blocking audio natively
+                if (!webcam.srcObject) {
+                    emotionBadge.innerText = 'Initializing Vision...';
+                    await Promise.all([
+                        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+                        faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL)
+                    ]);
+                }
+
+                emotionBadge.innerText = 'Acquiring hardware...';
+                // Grab dual stream for audio processing and video passing
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+
+                // Route Video
+                webcam.srcObject = stream;
+                webcam.onloadedmetadata = () => {
+                    emotionBadge.innerText = 'Tracking...';
+                    if (!faceTrackingInterval) {
+                        faceTrackingInterval = setInterval(detectEmotion, 500);
+                    }
+                };
+
+                // Route Audio Context
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 512;
+
+                microphone = audioContext.createMediaStreamSource(stream);
+                microphone.connect(analyser);
+
+                mediaRecorder = new MediaRecorder(stream);
+                mediaRecorder.ondataavailable = event => {
+                    if (event.data.size > 0) audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = async () => {
+                    if (discardNextRecord) {
+                        discardNextRecord = false;
+                        audioChunks = [];
+                        return;
+                    }
+
+                    if (!isConversing) return;
+
+                    statusText.innerText = "Processing...";
+                    statusText.style.color = "#4a90e2";
+                    volumeBar.style.width = "0%";
+
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    audioChunks = [];
+
+                    await sendAudio(audioBlob);
+                };
+            } catch (err) {
+                console.error("Hardware access denied or failed", err);
+                statusText.innerText = "Hardware Error";
+                statusText.style.color = "red";
+                emotionBadge.innerText = 'Access Denied';
+                throw err;
+            }
+        }
+
+        function updateVADState() {
+            if (!isConversing) return;
+            rAF_ID = requestAnimationFrame(updateVADState);
+
+            if (isWaitingForAPI) return;
+
+            const bufferLength = analyser.fftSize;
+            const dataArray = new Float32Array(bufferLength);
+            analyser.getFloatTimeDomainData(dataArray);
+
+            const rms = calculateRMS(dataArray);
+            const energy = smoothEnergy(rms);
+            const now = Date.now();
+
+            volumeBar.style.width = Math.min(100, energy * 2000) + "%";
+
+            // 🛑 INTERRUPT DETECTION LOGIC
+            if (energy > SPEECH_THRESHOLD && isSpeakingAPI) {
+                console.log("Interrupt Detected!");
+                isSpeakingAPI = false;
+                audioPlayer.pause();
+                audioPlayer.currentTime = 0;
+                appendMessage('System', '⚡ User Interrupted Speech');
+                
+                vadState = 'speaking';
+                speechStartTime = now;
+                silenceStartTime = 0;
+                statusText.innerText = "Listening... (Interrupted)";
+                statusText.style.color = "#ff4757";
+                startRecording();
+                return;
+            }
+
+            if (vadState === 'idle' && !isSpeakingAPI) {
+                if (energy > SPEECH_THRESHOLD) {
+                    vadState = 'speaking';
+                    speechStartTime = now;
+                    silenceStartTime = 0;
+
+                    statusText.innerText = "Listening...";
+                    statusText.style.color = "#2ed573";
+                    startRecording();
+                }
+            } else if (vadState === 'speaking') {
+                if (energy < SPEECH_THRESHOLD) {
+                    if (silenceStartTime === 0) silenceStartTime = now;
+
+                    if (now - silenceStartTime > SILENCE_DURATION) {
+                        const speechDuration = silenceStartTime - speechStartTime;
+
+                        if (speechDuration > MIN_SPEECH_DURATION) {
+                            vadState = 'idle';
+                            stopRecordingAndSend();
+                        } else {
+                            vadState = 'idle';
+                            abortRecording();
+                        }
+                    }
+                } else {
+                    silenceStartTime = 0;
+                }
+            }
+        }
+
+        function startRecording() {
+            discardNextRecord = false;
+            audioChunks = [];
+            if (mediaRecorder && mediaRecorder.state !== "recording") {
+                mediaRecorder.start();
+            }
+        }
+
+        function stopRecordingAndSend() {
+            isWaitingForAPI = true;
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.stop();
+            }
+        }
+
+        function abortRecording() {
+            discardNextRecord = true;
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.stop();
+            }
+            statusText.innerText = "Waiting for speech...";
+            statusText.style.color = "#888";
+        }
+
+        async function sendAudio(blob) {
+            const userId = document.getElementById('userIdInput').value || "test_user_1";
+
+            const formData = new FormData();
+            formData.append("user_id", userId);
+            formData.append("session_id", SESSION_ID);
+            formData.append("audio_file", blob, "recording.webm");
+            formData.append("emotion", currentEmotion); // Pack the real-time emotion!!
+
+            try {
+                const response = await fetch(`${BACKEND_URL}/process-input`, {
+                    method: "POST",
+                    body: formData
+                });
+                
+                isWaitingForAPI = false; // System returned payload, allow TTS interrupts
+
+                if (!response.ok) {
+                    let errStr = `Server returned status ${response.status}`;
+                    try {
+                        const errData = await response.json();
+                        if (errData.detail) errStr = errData.detail;
+                    } catch (e) { }
+                    throw new Error(errStr);
+                }
+
+                const data = await response.json();
+
+                appendMessage('You', `🎤 (Audio Processed) [detected: ${currentEmotion}]`);
+                appendMessage('Vani', data.response);
+
+                statusText.innerText = `Speaking... Confidence: ${data.confidence}%`;
+                statusText.style.color = "#ff9f43";
+
+                if (data.audio_url && isConversing) {
+                    isSpeakingAPI = true;
+                    audioPlayer.src = `${BACKEND_URL}${data.audio_url}`;
+                    
+                    setTimeout(() => {
+                        if (!isSpeakingAPI) return; // Audio was interrupted during the cognitive pause gap
+                        audioPlayer.play().catch(e => {
+                            console.error("Autoplay prevented:", e);
+                            resetVADLoop();
+                        });
+                    }, 400); // 400ms organic conversational pause
+                } else {
+                    resetVADLoop();
+                }
+
+            } catch (error) {
+                console.error("Backend request failed:", error);
+                appendMessage('System', `Error: ${error.message}`);
+                resetVADLoop();
+            }
+        }
+
+        function resetVADLoop() {
+            if (!isConversing) return;
+            setTimeout(() => {
+                isWaitingForAPI = false;
+                isSpeakingAPI = false;
+                vadState = 'idle';
+                silenceStartTime = 0;
+                speechStartTime = 0;
+                statusText.innerText = "Waiting for speech...";
+                statusText.style.color = "#888";
+            }, 300);
+        }
+
+        audioPlayer.onended = () => {
+            isSpeakingAPI = false;
+            resetVADLoop();
+        };
+
+        // --- Event Listeners ---
+        btnStart.addEventListener('click', async () => {
+            try {
+                btnStart.innerText = "Initializing...";
+                btnStart.disabled = true;
+
+                await initHardware();
+
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+
+                isConversing = true;
+                isWaitingForAPI = false;
+                isSpeakingAPI = false;
+                vadState = 'idle';
+
+                btnStart.style.display = 'none';
+                btnStart.innerText = "Start Conversation";
+                btnStart.disabled = false;
+                btnStop.style.display = 'block';
+
+                statusText.innerText = "Waiting for speech...";
+                statusText.style.color = "#888";
+
+                updateVADState();
+            } catch (e) {
+                btnStart.innerText = "Start Conversation";
+                btnStart.disabled = false;
+            }
+        });
+
+        btnStop.addEventListener('click', () => {
+            isConversing = false;
+            btnStop.style.display = 'none';
+            btnStart.style.display = 'block';
+
+            if (rAF_ID) cancelAnimationFrame(rAF_ID);
+
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                discardNextRecord = true;
+                mediaRecorder.stop();
+            }
+            audioPlayer.pause();
+
+            statusText.innerText = "Conversation Stopped.";
+            statusText.style.color = "#888";
+            volumeBar.style.width = "0%";
+        });
+
+    </script>
+</body>
+
+</html>
