@@ -14,7 +14,7 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 
 const COLORS = [colors.pastel.pink, colors.pastel.blue, colors.pastel.green, colors.pastel.lavender, '#FDB0A2', '#A3E4D7'];
 const COLOR_NAMES = ['RED', 'BLUE', 'GREEN', 'PURPLE'];
-const STROOP_COLORS = [colors.danger || '#FF6B6B', colors.primary || '#4D88FF', '#3DBE7A', '#9B59B6'];
+const STROOP_COLORS = ['#FF6B6B', colors.primary || '#4D88FF', '#3DBE7A', '#9B59B6'];
 
 export const GameEngine: React.FC<GameEngineProps> = ({ gameId, gameTitle, onComplete, onCancel }) => {
   const [gameState, setGameState] = useState<'intro' | 'playing' | 'result'>('intro');
