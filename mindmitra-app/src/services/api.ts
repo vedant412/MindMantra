@@ -8,7 +8,7 @@ import { Platform } from 'react-native';
 //
 //    Example: If ipconfig shows 192.168.1.5, set that below.
 // ============================================================
-const API_BASE_URL = 'http://172.22.47.75:8000';
+const API_BASE_URL = 'http://172.22.47.56';
 
 const USER_ID = 'user_123';
 const SESSION_ID = 'demo_session_1';
