@@ -2,13 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, metrics, shadows } from '../theme/theme';
-import { MockApi } from '../services/mockApi';
+import { ApiService } from '../services/api';
 
 export const InsightsScreen = () => {
   const [data, setData] = useState<any>(null);
 
   useEffect(() => {
-    MockApi.getInsights().then(setData);
+    ApiService.getInsights().then(setData);
   }, []);
 
   return (

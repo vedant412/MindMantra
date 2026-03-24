@@ -35,8 +35,8 @@ export const Orb = ({ size = 60, isActive = false }: OrbProps) => {
         style={[
           styles.orb, 
           { 
-            backgroundColor: isActive ? '#FF6B6B' : colors.orbGlow,
-            shadowColor: isActive ? '#FF6B6B' : colors.orbGlow,
+            backgroundColor: isActive ? colors.accent : colors.orbGlow,
+            shadowColor: isActive ? colors.accent : colors.orbGlow,
             transform: [{ scale }], 
             opacity,
             width: size, 
