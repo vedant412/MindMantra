@@ -1,5 +1,7 @@
-import { initializeApp, FirebaseApp } from 'firebase/app';
-import { getAuth, Auth, initializeAuth, getReactNativePersistence } from 'firebase/auth';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth, initializeAuth, Auth } from 'firebase/auth';
+// @ts-ignore
+import { getReactNativePersistence } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ==========================================
@@ -14,22 +16,35 @@ const firebaseConfig = {
   appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID
 };
 
-// Smart fallback: If you haven't filled out your .env file yet, the app won't crash.
-// The AuthContext will automatically fall back to "Mock Mode" so you can test the UI!
+console.log("🔥 [Firebase] API Key loaded:", firebaseConfig.apiKey ? "YES" : "MISSING");
+
+// If .env is not filled in, fall back to Mock Mode
 export const isMockMode = !firebaseConfig.apiKey || firebaseConfig.apiKey === "YOUR_API_KEY";
 
-let app: FirebaseApp | null = null;
+console.log("🔥 [Firebase] Mock Mode:", isMockMode);
+
+// Initialize Firebase App (safe for Fast Refresh)
+const app = !isMockMode
+  ? (getApps().length ? getApp() : initializeApp(firebaseConfig))
+  : null;
+
+// Initialize Auth with AsyncStorage persistence
+const g = globalThis as any;
 let auth: Auth | null = null;
 
-if (!isMockMode) {
+if (app) {
   try {
-    app = initializeApp(firebaseConfig);
-    // Use React Native persistence so users stay logged in when restarting the app
-    auth = initializeAuth(app, {
-      persistence: getReactNativePersistence(AsyncStorage)
-    });
-  } catch (e) {
-    console.warn("Firebase initialization failed:", e);
+    if (!g.__FIREBASE_AUTH__) {
+      g.__FIREBASE_AUTH__ = initializeAuth(app, {
+        persistence: getReactNativePersistence(AsyncStorage)
+      });
+      console.log("🔥 [Firebase] Auth initialized with AsyncStorage persistence.");
+    }
+    auth = g.__FIREBASE_AUTH__;
+  } catch (e: any) {
+    // DO NOT use getAuth(app) here, it just throws again and obscures the root cause
+    console.error("🔥 [Firebase] FATAL Persistence/Initialization setup failed:", e.message || e);
+    // Don't crash the app outright, let auth remain null (Mock Mode will kick in or LoginScreen will fail gracefully)
   }
 }
 

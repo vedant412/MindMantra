@@ -1,11 +1,11 @@
 import re
 from sqlalchemy.orm import Session
 from app.models.schemas import Conversation, UserFact, CognitiveHistory, UserEvent
-from typing import List, Dict
+from typing import List, Dict, Any, Optional
 from collections import Counter
 from datetime import datetime, date, timedelta, timezone
 
-def get_user_memory(db: Session, user_id: str, session_id: str) -> Dict[str, any]:
+def get_user_memory(db: Session, user_id: str, session_id: str) -> Dict[str, Any]:
     """Fetches user facts, recent events, and recent conversations."""
     facts = db.query(UserFact).filter(UserFact.user_id == user_id).all()
     # Fetch last 10 messages for short-term memory limit
@@ -130,7 +130,7 @@ def store_conversation(db: Session, user_id: str, session_id: str, user_text: st
     db.add(conversation)
     db.commit()
 
-def store_cognitive_history(db: Session, user_id: str, session_id: str, score: int, state: str, emotion: str = None, confidence: float = None):
+def store_cognitive_history(db: Session, user_id: str, session_id: str, score: int, state: str, emotion: Optional[str] = None, confidence: Optional[float] = None):
     """Stores the calculated cognitive score and state securely into the database."""
     history = CognitiveHistory(
         user_id=user_id,
@@ -165,7 +165,7 @@ def generate_insight(summary: dict) -> str:
         
     return insight
 
-def get_daily_summary(db: Session, user_id: str, target_date: date = None) -> dict:
+def get_daily_summary(db: Session, user_id: str, target_date: Optional[date] = None) -> dict:
     """Combines thousands of daily data points into a single conversational context array."""
     if not target_date:
         target_date = datetime.now().date()

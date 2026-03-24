@@ -19,7 +19,7 @@
     "expo-camera": "^55.0.10",
     "expo-font": "~13.3.2",
     "expo-status-bar": "~2.2.3",
-    "firebase": "^10.8.0",
+    "firebase": "^12.11.0",
     "react": "19.0.0",
     "react-native": "0.79.6",
     "react-native-safe-area-context": "5.4.0",

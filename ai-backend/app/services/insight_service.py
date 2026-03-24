@@ -2,9 +2,10 @@ from sqlalchemy.orm import Session
 from app.models.schemas import CognitiveHistory, UserEvent, DailyQuestion, UserInsight
 from collections import Counter
 from datetime import datetime, timezone, timedelta, date
+from typing import Optional
 
-def get_user_day_data(db: Session, user_id: str, target_date: date = None) -> dict:
-    if not target_date:
+def get_user_day_data(db: Session, user_id: str, target_date: Optional[date] = None) -> dict:
+    if target_date is None:
         target_date = datetime.now(timezone.utc).date()
         
     start_of_day = datetime.combine(target_date, datetime.min.time())
@@ -53,8 +54,8 @@ def get_user_day_data(db: Session, user_id: str, target_date: date = None) -> di
         "morning_avg": morning_avg
     }
 
-def detect_patterns(data: dict) -> list:
-    patterns = []
+def detect_patterns(data: dict) -> list[str]:
+    patterns: list[str] = []
     
     avg_score = data["avg_score"]
     emotion = data["dominant_emotion"]
@@ -101,7 +102,7 @@ def generate_and_store_insights(db: Session, user_id: str):
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     
     # Impose a strict boundary rule capping maximum insights at 2 per temporal cycle
-    for pat in patterns[:2]:
+    for pat in (patterns[i] for i in range(min(2, len(patterns)))):
         text = insight_map.get(pat)
         if not text: continue
         

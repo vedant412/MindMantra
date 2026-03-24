@@ -18,7 +18,7 @@ def detect_emotion_from_base64(image_b64: str) -> dict:
     decodes it, runs FER facial expression recognition,
     and returns the dominant emotion with confidence.
     """
-    if not _available or not _detector:
+    if not _available or _detector is None:
         return {"emotion": "neutral", "confidence": 0.0, "available": False}
     
     try:
@@ -61,7 +61,7 @@ def detect_emotion_from_base64(image_b64: str) -> dict:
             "emotion": mapped_emotion,
             "confidence": round(confidence, 2),
             "raw_emotion": dominant,
-            "all_emotions": {k: round(v, 2) for k, v in emotions.items()},
+            "all_emotions": {k: float(f"{float(v):.2f}") for k, v in emotions.items()},
             "faces_found": len(results)
         }
         

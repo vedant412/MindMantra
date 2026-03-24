@@ -24,6 +24,8 @@ export const TalkScreen = () => {
   // VAD (Silence detection) state
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const isRecordingRef = useRef<boolean>(false);
+  const emotionPollRef = useRef<NodeJS.Timeout | null>(null);
+  const latestEmotionRef = useRef<string>('neutral');
 
   useEffect(() => {
     setupAudioAndCamera();
@@ -54,6 +56,7 @@ export const TalkScreen = () => {
     if (soundRef.current) await soundRef.current.unloadAsync();
     if (recordingRef.current) await recordingRef.current.stopAndUnloadAsync();
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    stopEmotionPolling();
   };
 
   // 1. DYNAMIC TYPEWRITER SYNC
@@ -70,24 +73,44 @@ export const TalkScreen = () => {
     }
   }, [state, aiText]);
 
-  // 2. CAMERA EMOTION CAPTURE (Silent background poll)
+  // 2. CAMERA EMOTION CAPTURE (Sends frame to backend)
   const captureEmotion = async () => {
     if (!cameraRef.current) return 'neutral';
     try {
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.1, // very low quality for speed
+        quality: 0.1,
         base64: true,
         skipProcessing: true,
       });
       if (photo?.base64) {
-        // We'll build the backend detect-emotion endpoint soon.
-        // For now, assume it returns "neutral". To be linked.
-        return 'neutral';
+        const result = await ApiService.sendEmotionFrame(photo.base64);
+        const detected = result?.emotion || 'neutral';
+        console.log(`[Emotion] Detected: ${detected} (confidence: ${result?.confidence})`);
+        latestEmotionRef.current = detected;
+        setDetectedEmotion(detected);
+        return detected;
       }
     } catch (e) {
-      console.log('Camera capture error (ignore if unmounted):', e);
+      console.log('[Emotion] Capture error (non-fatal):', e);
     }
-    return 'neutral';
+    return latestEmotionRef.current;
+  };
+
+  // 2b. BACKGROUND EMOTION POLLING (runs every 4s during active conversation)
+  const startEmotionPolling = () => {
+    stopEmotionPolling();
+    emotionPollRef.current = setInterval(async () => {
+      await captureEmotion();
+    }, 4000);
+    console.log('[Emotion] Background polling started (every 4s)');
+  };
+
+  const stopEmotionPolling = () => {
+    if (emotionPollRef.current) {
+      clearInterval(emotionPollRef.current);
+      emotionPollRef.current = null;
+      console.log('[Emotion] Background polling stopped');
+    }
   };
 
   // 3. START RECORDING (Auto-listening loop entry point)
@@ -104,6 +127,9 @@ export const TalkScreen = () => {
       setDisplayedAiText("");
       setState('listening'); // brief transition
       setTranscript("Listening...");
+
+      // Start background emotion polling when conversation begins
+      startEmotionPolling();
 
       // Required to switch mode for iOS to allow recording
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true });
@@ -172,9 +198,12 @@ export const TalkScreen = () => {
 
       if (!uri) throw new Error("No audio URI generated");
 
-      // Grab immediate emotion snapshot
-      const currentEmotion = await captureEmotion();
+      // Grab latest emotion from the background polling (or capture one now)
+      const currentEmotion = latestEmotionRef.current !== 'neutral' 
+        ? latestEmotionRef.current 
+        : await captureEmotion();
       setDetectedEmotion(currentEmotion);
+      console.log(`[TalkScreen] Sending to backend with emotion: ${currentEmotion}`);
 
       // Send actual real .m4a audio file to backend
       const res = await ApiService.sendAudioInput(uri, currentEmotion);
@@ -201,6 +230,7 @@ export const TalkScreen = () => {
       console.error('Stop recording failed', err);
       setError("Failed to process audio.");
       setState('idle');
+      stopEmotionPolling();
     }
   };
 
@@ -230,10 +260,25 @@ export const TalkScreen = () => {
 
   return (
     <View style={styles.container}>
-      {/* Hidden camera just for background emotion frames */}
-      <View style={{ width: 1, height: 1, overflow: 'hidden', opacity: 0 }}>
-        <CameraView ref={cameraRef} style={{ flex: 1 }} facing="front" />
-      </View>
+      {/* Floating PiP Camera Preview - visible during conversation */}
+      {state !== 'idle' && (
+        <View style={styles.pipContainer}>
+          <View style={styles.pipCamera}>
+            <CameraView ref={cameraRef} style={styles.pipCameraView} facing="front" />
+          </View>
+          {detectedEmotion !== 'neutral' && (
+            <View style={styles.emotionTag}>
+              <Text style={styles.emotionTagText}>{detectedEmotion}</Text>
+            </View>
+          )}
+        </View>
+      )}
+      {/* Hidden camera for when idle (still need ref for first capture) */}
+      {state === 'idle' && (
+        <View style={{ width: 1, height: 1, overflow: 'hidden', opacity: 0 }}>
+          <CameraView ref={cameraRef} style={{ flex: 1 }} facing="front" />
+        </View>
+      )}
 
       <View style={styles.header}>
         <Text style={styles.modeText}>
@@ -283,6 +328,11 @@ export const TalkScreen = () => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background, padding: 30 },
+  pipContainer: { position: 'absolute', top: 55, right: 20, zIndex: 10, alignItems: 'center' },
+  pipCamera: { width: 90, height: 120, borderRadius: 20, overflow: 'hidden', borderWidth: 2, borderColor: colors.primary + '40', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 8, elevation: 10 },
+  pipCameraView: { flex: 1 },
+  emotionTag: { marginTop: 6, backgroundColor: colors.primary + '20', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10 },
+  emotionTagText: { fontSize: 11, fontWeight: '700', color: colors.primary, textTransform: 'capitalize' },
   header: { marginTop: 60, alignItems: 'center' },
   modeText: { fontSize: 13, fontWeight: '700', color: colors.subText, textTransform: 'uppercase', letterSpacing: 2 },
   orbContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },

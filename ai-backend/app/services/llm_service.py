@@ -1,5 +1,5 @@
 import requests
-from typing import Dict
+from typing import Dict, Optional
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
@@ -8,16 +8,16 @@ def generate_response(
     memory: Dict, 
     state: str, 
     selected_question: str, 
-    emotion: str = None,
-    cognitive_score: int = None,
-    cognitive_state: str = None,
-    sentiment: str = None,
-    confidence: float = None,
-    current_time: str = None,
-    time_of_day: str = None,
+    emotion: Optional[str] = None,
+    cognitive_score: Optional[int] = None,
+    cognitive_state: Optional[str] = None,
+    sentiment: Optional[str] = None,
+    confidence: Optional[float] = None,
+    current_time: Optional[str] = None,
+    time_of_day: Optional[str] = None,
     ask_time_q: bool = False,
-    daily_summary: dict = None,
-    recent_insights: list = None
+    daily_summary: Optional[dict] = None,
+    recent_insights: Optional[list[str]] = None
 ) -> tuple[str, str]:
     """
     Generates a response using Ollama API.
@@ -130,8 +130,9 @@ Respond naturally taking into account the history."""
             last_exclaim = truncated.rfind("!")
             
             cut_index = max(last_period, last_question, last_exclaim)
+            cut_idx_int = int(cut_index + 1)
             if cut_index > 10:
-                full_response = truncated[:cut_index+1]
+                full_response = truncated[:cut_idx_int]
             else:
                 full_response = truncated + "..."
                 

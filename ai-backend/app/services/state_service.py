@@ -1,4 +1,6 @@
-def determine_state(text: str, sentiment: str, confidence: int = None) -> str:
+from typing import Optional
+
+def determine_state(text: str, sentiment: str, confidence: Optional[int] = None) -> str:
     """
     Basic rule-based state detection enhanced with confidence score.
     """

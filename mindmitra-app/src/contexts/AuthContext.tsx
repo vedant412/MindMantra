@@ -26,8 +26,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let unsubscribe: () => void = () => {};
     
     const checkState = async () => {
-      // 1. Check if they already finished onboarding in local storage
-      const onboardStatus = await AsyncStorage.getItem('@has_onboarded');
+      let onboardStatus = 'false';
+      try {
+        onboardStatus = await AsyncStorage.getItem('@has_onboarded') || 'false';
+      } catch (e) {
+        console.warn("AsyncStorage Read Error (onboard):", e);
+      }
       setHasCompletedOnboarding(onboardStatus === 'true');
 
       // 2. Auth state handling
@@ -44,10 +48,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       } else {
         // MOCK MODE: Check if we have a saved mock session
-        const mockUid = await AsyncStorage.getItem('@mock_uid');
-        if (mockUid) {
-          setUser({ uid: mockUid, email: 'mock@test.com', isMock: true });
-          globalUserId = mockUid;
+        try {
+          const mockUid = await AsyncStorage.getItem('@mock_uid');
+          if (mockUid) {
+            setUser({ uid: mockUid, email: 'mock@test.com', isMock: true });
+            globalUserId = mockUid;
+          }
+        } catch (e) {
+          console.warn("AsyncStorage Read Error (mock_uid):", e);
         }
         setLoading(false);
       }
@@ -58,7 +66,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const completeOnboarding = async () => {
-    await AsyncStorage.setItem('@has_onboarded', 'true');
+    try {
+      await AsyncStorage.setItem('@has_onboarded', 'true');
+    } catch (e) {}
     setHasCompletedOnboarding(true);
   };
 
@@ -76,7 +86,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const mockLogin = async (uid: string) => {
-    await AsyncStorage.setItem('@mock_uid', uid);
+    try {
+      await AsyncStorage.setItem('@mock_uid', uid);
+    } catch (e) {
+      console.warn("AsyncStorage Write Error (mock_uid):", e);
+    }
     setUser({ uid, email: 'mock@test.com', isMock: true });
     globalUserId = uid;
   };

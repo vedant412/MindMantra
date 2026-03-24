@@ -4,7 +4,7 @@ import { globalUserId } from '../contexts/AuthContext';
 // ============================================================
 // 🔧 IMPORTANT: Set this to YOUR machine's Wi-Fi IP address.
 // ============================================================
-const API_BASE_URL = 'http://172.22.47.56';
+const API_BASE_URL = 'http://10.105.151.236:8000';
 
 // Generate a persistent session ID for this app launch so memory works across requests
 const SESSION_ID = 'session_' + Math.random().toString(36).substring(2, 9);
@@ -76,7 +76,7 @@ export const ApiService = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image_b64: imageBase64 })
       }, 5000);
-      
+
       const data = await res.json();
       return data; // { emotion: "happy", confidence: 0.9 }
     } catch (e) {
@@ -98,16 +98,16 @@ export const ApiService = {
           emotion: emotion
         })
       }, 30000);
-      
+
       if (!res.ok) return { success: false, response: 'Backend error… try again.' };
-      
+
       const data = await res.json();
-      
+
       let fullAudioUrl = null;
       if (data.audio_url) {
         fullAudioUrl = data.audio_url.startsWith('http') ? data.audio_url : `${API_BASE_URL}${data.audio_url}`;
       }
-      
+
       return {
         success: true,
         response: data.response,
@@ -126,7 +126,7 @@ export const ApiService = {
     formData.append('user_id', globalUserId);
     formData.append('session_id', SESSION_ID);
     formData.append('emotion', emotion);
-    
+
     // Some phones don't add the extension, so default to .m4a
     const filename = audioUri.split('/').pop() || 'recording.m4a';
     const type = 'audio/m4a'; // Expo AV mostly gives m4a on both platforms
@@ -143,16 +143,16 @@ export const ApiService = {
         method: 'POST',
         body: formData
       }, 30000); // 30s timeout
-      
+
       if (!res.ok) return { success: false, response: 'Backend error… try again.', audio_url: null };
-      
+
       const data = await res.json();
-      
+
       let fullAudioUrl = null;
       if (data.audio_url) {
         fullAudioUrl = data.audio_url.startsWith('http') ? data.audio_url : `${API_BASE_URL}${data.audio_url}`;
       }
-      
+
       return {
         success: true,
         response: data.response,
