@@ -19,8 +19,18 @@ from app.services.tts_service import text_to_speech
 from app.services.speech_analysis_service import analyze_speech
 from app.services.cognitive_service import calculate_cognitive_score
 from app.services.time_service import get_time_context
+from app.services.emotion_service import detect_emotion_from_base64
+from pydantic import BaseModel
 
 router = APIRouter()
+
+class EmotionRequest(BaseModel):
+    image_b64: str
+
+@router.post("/detect-emotion")
+async def detect_emotion(req: EmotionRequest):
+    result = detect_emotion_from_base64(req.image_b64)
+    return result
 
 @router.post("/process-input", response_model=ProcessInputResponse)
 async def process_input(request: Request, db: Session = Depends(get_db)):

@@ -8,3 +8,5 @@ transformers
 torch
 faster-whisper
 edge-tts
+fer
+opencv-python-headless

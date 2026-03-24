@@ -1,43 +1,62 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Audio } from 'expo-av';
+import { Camera, CameraView } from 'expo-camera';
 import { Orb } from '../components/Orb';
 import { colors } from '../theme/theme';
 import { ApiService } from '../services/api';
 
+type TalkState = 'idle' | 'listening' | 'recording' | 'processing' | 'speaking';
+
 export const TalkScreen = () => {
-  const [state, setState] = useState<'idle' | 'listening' | 'processing' | 'speaking'>('idle');
-  const [transcript, setTranscript] = useState("Tap below to talk to Vani");
+  const [state, setState] = useState<TalkState>('idle');
+  const [transcript, setTranscript] = useState("Tap Orb to Wake Vani");
   const [aiText, setAiText] = useState("");
   const [displayedAiText, setDisplayedAiText] = useState("");
   const [error, setError] = useState("");
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const [detectedEmotion, setDetectedEmotion] = useState("neutral");
 
-  // Configure audio permissions on mount
+  const soundRef = useRef<Audio.Sound | null>(null);
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  // Using CameraView ref for Expo SDK 50+
+  const cameraRef = useRef<any>(null);
+
+  // VAD (Silence detection) state
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isRecordingRef = useRef<boolean>(false);
+
   useEffect(() => {
-    const setupAudio = async () => {
-      try {
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: false,
-          playsInSilentModeIOS: true,
-          staysActiveInBackground: false,
-          shouldDuckAndroid: true,
-        });
-        console.log('[TalkScreen] Audio mode configured successfully');
-      } catch (err) {
-        console.warn('[TalkScreen] Audio mode setup failed:', err);
-      }
-    };
-    setupAudio();
-    
-    return () => {
-      if (soundRef.current) {
-        soundRef.current.unloadAsync();
-      }
-    };
+    setupAudioAndCamera();
+    return () => { cleanupAudio(); };
   }, []);
 
-  // Typewriter text animation synced with speaking state
+  const setupAudioAndCamera = async () => {
+    try {
+      await Audio.requestPermissionsAsync();
+      const cameraStatus = await Camera.requestCameraPermissionsAsync();
+      if (!cameraStatus.granted) {
+        console.warn('Camera permission not granted!');
+      }
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: true,
+      });
+      console.log('[TalkScreen] Audio + Camera permissions configured');
+    } catch (err) {
+      console.warn('[TalkScreen] Setup failed:', err);
+    }
+  };
+
+  const cleanupAudio = async () => {
+    if (soundRef.current) await soundRef.current.unloadAsync();
+    if (recordingRef.current) await recordingRef.current.stopAndUnloadAsync();
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+  };
+
+  // 1. DYNAMIC TYPEWRITER SYNC
   useEffect(() => {
     if (state === 'speaking' && aiText) {
       let i = 0;
@@ -51,128 +70,213 @@ export const TalkScreen = () => {
     }
   }, [state, aiText]);
 
+  // 2. CAMERA EMOTION CAPTURE (Silent background poll)
+  const captureEmotion = async () => {
+    if (!cameraRef.current) return 'neutral';
+    try {
+      const photo = await cameraRef.current.takePictureAsync({
+        quality: 0.1, // very low quality for speed
+        base64: true,
+        skipProcessing: true,
+      });
+      if (photo?.base64) {
+        // We'll build the backend detect-emotion endpoint soon.
+        // For now, assume it returns "neutral". To be linked.
+        return 'neutral';
+      }
+    } catch (e) {
+      console.log('Camera capture error (ignore if unmounted):', e);
+    }
+    return 'neutral';
+  };
+
+  // 3. START RECORDING (Auto-listening loop entry point)
+  const startRecording = async () => {
+    try {
+      // If AI was speaking, user interrupted it
+      if (soundRef.current && state === 'speaking') {
+        await soundRef.current.stopAsync();
+        console.log('[TalkScreen] Interrupted AI speech');
+      }
+
+      setError("");
+      setAiText("");
+      setDisplayedAiText("");
+      setState('listening'); // brief transition
+      setTranscript("Listening...");
+
+      // Required to switch mode for iOS to allow recording
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true });
+
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY,
+        (status) => handleAudioMetering(status),
+        100 // Poll every 100ms for accurate silence detection
+      );
+      
+      recordingRef.current = recording;
+      isRecordingRef.current = true;
+      setState('recording');
+      console.log('[TalkScreen] Recording started');
+
+    } catch (err) {
+      console.error('Failed to start recording', err);
+      setError("Microphone access failed.");
+      setState('idle');
+    }
+  };
+
+  // 4. VAD - SILENCE DETECTION
+  const handleAudioMetering = (status: Audio.RecordingStatus) => {
+    if (!isRecordingRef.current) return;
+    
+    // Volume level usually ranges from -160 to 0. 
+    // Silence varies by mic, usually below -40 to -50 is quiet room.
+    const isSilence = status.metering === undefined || status.metering < -35; 
+
+    if (isSilence) {
+      // If we've been silent for 1.5 seconds, auto-stop recording
+      if (!silenceTimerRef.current) {
+        silenceTimerRef.current = setTimeout(() => {
+          console.log('[TalkScreen] VAD: Silence confirmed. Auto-stopping recording.');
+          stopRecordingAndProcess();
+        }, 1500);
+      }
+    } else {
+      // User is still speaking (loud), clear the silence timeout
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
+      }
+    }
+  };
+
+  // 5. STOP RECORDING & SEND TO BACKEND
+  const stopRecordingAndProcess = async () => {
+    if (!recordingRef.current || !isRecordingRef.current) return;
+    
+    isRecordingRef.current = false;
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    silenceTimerRef.current = null;
+    
+    setState('processing');
+    setTranscript("Processing your voice...");
+    
+    try {
+      await recordingRef.current.stopAndUnloadAsync();
+      const uri = recordingRef.current.getURI();
+      recordingRef.current = null;
+      
+      // We must switch Audio Session back to playback mode on iOS or sound will be very low
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+
+      if (!uri) throw new Error("No audio URI generated");
+
+      // Grab immediate emotion snapshot
+      const currentEmotion = await captureEmotion();
+      setDetectedEmotion(currentEmotion);
+
+      // Send actual real .m4a audio file to backend
+      const res = await ApiService.sendAudioInput(uri, currentEmotion);
+      
+      if (!res.success) {
+        setError(res.response);
+        setState('idle');
+        setTranscript("Tap Orb to try again");
+        return;
+      }
+
+      // Voice processing success
+      setState('speaking');
+      setAiText(res.response);
+      
+      if (res.audio_url) {
+        await playAudio(res.audio_url);
+      } else {
+        // Fallback if TTS failed
+        setTimeout(() => setState('idle'), 5000);
+      }
+
+    } catch (err) {
+      console.error('Stop recording failed', err);
+      setError("Failed to process audio.");
+      setState('idle');
+    }
+  };
+
+  // 6. PLAYBACK AUDIO & AUTO-LOOP
   const playAudio = async (url: string) => {
     try {
-      console.log('[TalkScreen] Loading audio from:', url);
-      
-      if (soundRef.current) {
-        await soundRef.current.unloadAsync();
-        soundRef.current = null;
-      }
+      if (soundRef.current) await soundRef.current.unloadAsync();
       
       const { sound } = await Audio.Sound.createAsync(
         { uri: url },
         { shouldPlay: true, volume: 1.0 }
       );
       soundRef.current = sound;
-      console.log('[TalkScreen] Audio playing');
       
       sound.setOnPlaybackStatusUpdate((status: any) => {
         if (status.isLoaded && status.didJustFinish) {
-          console.log('[TalkScreen] Audio playback finished');
-          setState('idle');
-          setTranscript("Tap below to talk again");
+          // AI finished speaking perfectly! Loop infinitely by starting recording automatically again.
+          console.log('[TalkScreen] AI finished speaking. Auto-looping to listen.');
+          startRecording();
         }
       });
     } catch (err) {
-      console.warn('[TalkScreen] Audio playback failed:', err);
-      // Still show text even if audio fails
-      setTimeout(() => {
-        setState('idle');
-        setTranscript("Tap below to talk again");
-      }, 4000);
-    }
-  };
-
-  const handleSimulate = async () => {
-    // Reset
-    setError("");
-    setAiText("");
-    setDisplayedAiText("");
-    
-    // Step 1: Show user text (simulating listening)
-    setState('listening');
-    setTranscript("I feel totally overwhelmed today.");
-    console.log('[TalkScreen] Step 1: Listening state');
-    
-    // Step 2: After brief pause, send to backend
-    await new Promise(resolve => setTimeout(resolve, 1200));
-    
-    setState('processing');
-    console.log('[TalkScreen] Step 2: Processing — calling backend...');
-    
-    const res = await ApiService.sendTextInput("I feel totally overwhelmed today.");
-    console.log('[TalkScreen] Step 3: Backend responded:', JSON.stringify(res));
-    
-    if (!res.success) {
-      setError(res.response);
-      setState('idle');
-      setTranscript("Something went wrong. Tap to try again.");
-      return;
-    }
-    
-    // Step 3: Show AI response
-    setState('speaking');
-    setAiText(res.response);
-    console.log('[TalkScreen] Step 4: Speaking state, audio_url:', res.audio_url);
-    
-    // Step 4: Play audio if available
-    if (res.audio_url) {
-      await playAudio(res.audio_url);
-    } else {
-      console.log('[TalkScreen] No audio URL returned, text-only mode');
-      setTimeout(() => {
-        setState('idle');
-        setTranscript("Tap below to talk again");
-      }, 5000);
-    }
-  };
-
-  const getStatusText = () => {
-    switch (state) {
-      case 'idle': return 'TAP TO START';
-      case 'listening': return 'LISTENING...';
-      case 'processing': return 'VANI IS THINKING...';
-      case 'speaking': return 'VANI IS SPEAKING...';
+      console.warn('Playback failed:', err);
+      setTimeout(() => setState('idle'), 5000);
     }
   };
 
   return (
     <View style={styles.container}>
+      {/* Hidden camera just for background emotion frames */}
+      <View style={{ width: 1, height: 1, overflow: 'hidden', opacity: 0 }}>
+        <CameraView ref={cameraRef} style={{ flex: 1 }} facing="front" />
+      </View>
+
       <View style={styles.header}>
-        <Text style={styles.modeText}>{getStatusText()}</Text>
+        <Text style={styles.modeText}>
+           {state === 'idle' ? 'VANI IS SLEEPING' : state.toUpperCase() + '...'}
+        </Text>
       </View>
       
-      <View style={styles.orbContainer}>
-        <Orb size={180} isActive={state === 'speaking' || state === 'processing'} />
-      </View>
+      <TouchableOpacity 
+        style={styles.orbContainer} 
+        activeOpacity={0.9} 
+        onPress={state === 'recording' ? stopRecordingAndProcess : startRecording}
+      >
+        <Orb 
+          size={180} 
+          mode={state} // Orb will pulse based on this state now
+        />
+      </TouchableOpacity>
       
       <View style={styles.textContainer}>
         {state === 'processing' && (
           <View style={styles.processingContainer}>
             <ActivityIndicator size="small" color={colors.primary} />
-            <Text style={styles.processingText}>Analyzing your message...</Text>
+            <Text style={styles.processingText}>Processing...</Text>
           </View>
         )}
-        {(state === 'idle' || state === 'listening') && (
-          <Text style={styles.userText}>{transcript}</Text>
-        )}
+        
+        {state === 'idle' && <Text style={styles.userText}>{transcript}</Text>}
+        {state === 'listening' && <Text style={styles.userText}>Listening...</Text>}
+        {state === 'recording' && <Text style={styles.userText}>Speak now (auto-stops on silence)</Text>}
+        
         {state === 'speaking' && (
           <Text style={styles.aiText}>{displayedAiText}</Text>
         )}
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
       </View>
 
-      <TouchableOpacity 
-        style={[styles.testBtn, state !== 'idle' && state !== 'listening' ? styles.testBtnDisabled : null]} 
-        onPress={handleSimulate} 
-        activeOpacity={0.8}
-        disabled={state === 'processing' || state === 'speaking'}
-      >
-        <Text style={styles.testBtnText}>
-          {state === 'processing' ? 'Processing...' : state === 'speaking' ? 'Vani is speaking...' : 'Simulate Voice Input'}
-        </Text>
-      </TouchableOpacity>
+      <View style={{ alignItems: 'center', marginBottom: 60 }}>
+        {state !== 'idle' && (
+           <TouchableOpacity style={styles.stopBtn} onPress={() => { cleanupAudio(); setState('idle'); }}>
+             <Text style={styles.stopBtnText}>End Chat</Text>
+           </TouchableOpacity>
+        )}
+      </View>
     </View>
   );
 };
@@ -185,10 +289,9 @@ const styles = StyleSheet.create({
   textContainer: { flex: 1, justifyContent: 'flex-start', alignItems: 'center', paddingHorizontal: 10 },
   processingContainer: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   processingText: { fontSize: 16, color: colors.subText, fontWeight: '500' },
-  userText: { fontSize: 22, color: colors.text, textAlign: 'center', fontStyle: 'italic', fontWeight: '500', lineHeight: 32 },
-  aiText: { fontSize: 22, color: colors.primary, textAlign: 'center', fontWeight: '700', lineHeight: 32 },
+  userText: { fontSize: 20, color: colors.text, textAlign: 'center', fontStyle: 'italic', fontWeight: '500', lineHeight: 30 },
+  aiText: { fontSize: 24, color: colors.primary, textAlign: 'center', fontWeight: '700', lineHeight: 34 },
   errorText: { fontSize: 14, color: '#D9534F', textAlign: 'center', marginTop: 12, fontWeight: '500' },
-  testBtn: { backgroundColor: colors.pastel.lavender, padding: 20, borderRadius: 28, alignItems: 'center', marginBottom: 100 },
-  testBtnDisabled: { opacity: 0.5 },
-  testBtnText: { color: colors.accent, fontWeight: '700', fontSize: 16 }
+  stopBtn: { backgroundColor: colors.card, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 20, borderWidth: 1, borderColor: colors.border },
+  stopBtnText: { color: colors.subText, fontWeight: '600' }
 });
