@@ -1,8 +1,10 @@
 import React, { useState, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Animated, Modal } from 'react-native';
+import { useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, metrics, shadows } from '../theme/theme';
 import { useActivityParams } from '../contexts/ActivityContext';
+import { useCognitiveScore } from '../contexts/CognitiveScoreContext';
 import { GameEngine } from '../components/GameEngine';
 import { ExerciseEngine } from '../components/ExerciseEngine';
 
@@ -54,6 +56,18 @@ export const ActivitiesScreen = () => {
 
   // Global Sync Context
   const { completedTasks, markCompleted, dailyPoints } = useActivityParams();
+  const { addCompletedGame, addCompletedExercise } = useCognitiveScore();
+  const route = useRoute<any>();
+
+  React.useEffect(() => {
+    if (route.params?.activityId) {
+      const act = ALL_ACTIVITIES.find(a => a.id === route.params.activityId);
+      if (act && act.isActive) {
+        setActiveTab(act.category);
+        setTimeout(() => setActiveActivity(act), 500); 
+      }
+    }
+  }, [route.params?.activityId]);
 
   const startAnimation = () => {
     Animated.sequence([
@@ -76,7 +90,14 @@ export const ActivitiesScreen = () => {
   };
 
   const handleTaskCompleted = (points: number, feedback: string) => {
-    if (activeActivity) markCompleted(activeActivity.id, points);
+    if (activeActivity) {
+      markCompleted(activeActivity.id, points);
+      if (activeActivity.category === 'Games') {
+        addCompletedGame();
+      } else {
+        addCompletedExercise();
+      }
+    }
     Alert.alert('Task Completed! 🎉', feedback);
     setActiveActivity(null);
   };

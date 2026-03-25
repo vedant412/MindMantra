@@ -5,9 +5,10 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 
 def generate_response(
     user_text: str, 
-    memory: Dict, 
-    state: str, 
-    selected_question: str, 
+    language: str = "en",
+    memory: Dict = None, 
+    state: str = "normal", 
+    selected_question: str = "", 
     emotion: Optional[str] = None,
     cognitive_score: Optional[int] = None,
     cognitive_state: Optional[str] = None,
@@ -18,10 +19,10 @@ def generate_response(
     ask_time_q: bool = False,
     daily_summary: Optional[dict] = None,
     recent_insights: Optional[list[str]] = None
-) -> tuple[str, str]:
+) -> tuple[str, str, list]:
     """
     Generates a response using Ollama API.
-    Returns (response_text, generated_question)
+    Returns (response_text, generated_question, actions_array)
     """
     facts_str = "\n".join([f"* {k}: {v}" for k, v in memory.get("facts", {}).items()])
     
@@ -74,9 +75,23 @@ Instruction: Use this macro context subtly in conversation.
     elif emotion in ["happy", "surprise"]:
         length_instruction = "Keep your response extremely SHORT (1-2 sentences max). Be light and positive. Mirror their energy."
 
+    lang_map = {"en": "English", "hi": "Hindi", "mr": "Marathi"}
+    lang_name = lang_map.get(language, "English")
+
+    lang_specific_instruction = ""
+    if language == "mr":
+        lang_specific_instruction = "CRITICAL: You MUST use pure Marathi vocabulary and grammar (e.g., use 'आहे', 'कसं', 'मी'). Do NOT mix Hindi words. You MUST write everything strictly in Devanagari script (देवनागरी)."
+    elif language == "hi":
+        lang_specific_instruction = "CRITICAL: You MUST use pure Hindi vocabulary and grammar. You MUST write everything strictly in Devanagari script (देवनागरी)."
+
+    user_name = memory.get("facts", {}).get("Name", "Friend")
+
     prompt = f"""You are Vani, an empathetic AI companion. You are having a fluid, ongoing voice conversation with the user.
 
 CORE PERSONALITY:
+* ALWAYS RESPOND EXCLUSIVELY IN {lang_name.upper()}.
+* Address the user casually and warmly by their name: {user_name}
+* {lang_specific_instruction}
 * {length_instruction}
 * Always speak naturally ("yeah", "hmm", "I see") and use contractions.
 * You are listening to them actively. DO NOT give long lists, bullet points, or paragraphs.
@@ -103,11 +118,34 @@ RULES ON MEMORY:
 Time context: It is currently {current_time} ({time_of_day}).
 {f"Ask a casual, friendly question relevant to the {time_of_day} if appropriate." if ask_time_q else ""}
 
-Respond naturally taking into account the history."""
+CRITICAL INSTRUCTION: You MUST write your ENTIRE final reply in {lang_name}. Do NOT use English unless the requested language is English. Respond naturally taking into account the history, strictly in {lang_name} using the correct native script.
+
+CRITICAL JSON OUTPUT REQUIREMENT:
+You MUST output your response strictly as a valid JSON object matching this schema. Do not output markdown code blocks.
+{{
+  "text": "Your spoken conversational response here translated into {lang_name}",
+  "actions": []
+}} // Only add an action if clinically advised based on user state.
+
+SUPPORTED ACTIONS (Use these IDs exactly if suggesting an activity):
+Games: pattern, reaction, stroop, sequence
+Exercises: breathing, meditation, stretching, journaling
+
+CONTEXTUAL ACTION LOGIC:
+- If stress detected: suggest {{"type": "exercise", "id": "breathing"}}
+- If low activity: suggest {{"type": "game", "id": "pattern"}}
+- If low memory: suggest {{"type": "game", "id": "sequence"}}
+- If high screen time: suggest {{"type": "exercise", "id": "meditation"}}
+
+Example JSON:
+{{
+  "text": "It sounds like you're stressed. Let's do a quick breathing exercise.",
+  "actions": [{{ "type": "exercise", "id": "breathing" }}]
+}}"""
     
     # In case there's a specialized DB question to ask
     if selected_question:
-        prompt += f"\n\nYou MUST end your response by asking THIS specific question: '{selected_question}'"
+        prompt += f"\n\nYou MUST end your response by asking THIS specific question translated to {lang_name} (in native script): '{selected_question}'"
 
     payload = {
         "model": "mistral", # standard model placeholder
@@ -119,8 +157,32 @@ Respond naturally taking into account the history."""
         response = requests.post(OLLAMA_URL, json=payload, timeout=30)
         response.raise_for_status()
         data = response.json()
-        full_response = data.get("response", "").strip()
+        raw_output = data.get("response", "").strip()
         
+        # Strip markdown if LLM wrapped it
+        if raw_output.startswith("```json"):
+            raw_output = raw_output[7:]
+        if raw_output.startswith("```"):
+            raw_output = raw_output[3:]
+        if raw_output.endswith("```"):
+            raw_output = raw_output[:-3]
+            
+        raw_output = raw_output.strip()
+        
+        actions_list = []
+        try:
+            import json
+            parsed_json = json.loads(raw_output)
+            full_response = parsed_json.get("text", "")
+            actions_list = parsed_json.get("actions", [])
+        except json.JSONDecodeError:
+            # Fallback if the LLM completely failed JSON
+            full_response = raw_output
+            actions_list = []
+        
+        if not full_response:
+            full_response = raw_output # Hard fallback
+            
         # Hard-Stop Word Trimming Post-Processor
         words = full_response.split()
         if len(words) > 40:
@@ -151,9 +213,9 @@ Respond naturally taking into account the history."""
             if not generated_q:
                 generated_q = "What's been going on?"
                 
-        return full_response, generated_q
+        return full_response, generated_q, actions_list
 
     except Exception as e:
         print(f"Ollama Error: {e}")
         return ("Hmm... my brain is a little fuzzy right now.", 
-                selected_question if selected_question else "Can we try that again?")
+                selected_question if selected_question else "Can we try that again?", [])

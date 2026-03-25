@@ -67,6 +67,14 @@ async def create_user_profile(profile: UserProfileCreate, db: Session = Depends(
     db.commit()
     return {"status": "success"}
 
+@router.get("/user-profile")
+def get_user_profile(user_id: str = Query(...), db: Session = Depends(get_db)):
+    facts = db.query(UserFact).filter(UserFact.user_id == user_id).all()
+    profile = {}
+    for f in facts:
+        profile[f.key] = f.value
+    return profile
+
 @router.post("/process-input", response_model=ProcessInputResponse)
 async def process_input(request: Request, db: Session = Depends(get_db)):
     content_type = request.headers.get("Content-Type", "")
@@ -76,6 +84,7 @@ async def process_input(request: Request, db: Session = Depends(get_db)):
     text = None
     emotion = None
     audio_file = None
+    preferred_language = "auto"
     
     if "application/json" in content_type:
         try:
@@ -84,6 +93,7 @@ async def process_input(request: Request, db: Session = Depends(get_db)):
             session_id = data.get("session_id")
             text = data.get("text")
             emotion = data.get("emotion")
+            preferred_language = data.get("preferred_language", "auto")
         except:
             print("BLOCKED: Invalid JSON payload provided.")
             raise HTTPException(status_code=400, detail="Invalid JSON format")
@@ -93,6 +103,7 @@ async def process_input(request: Request, db: Session = Depends(get_db)):
         session_id = form.get("session_id")
         text = form.get("text")
         emotion = form.get("emotion")
+        preferred_language = form.get("preferred_language", "auto")
         # Ensure it's an UploadFile object
         audio_field = form.get("audio_file")
         if hasattr(audio_field, "filename") and audio_field.filename:
@@ -117,6 +128,8 @@ async def process_input(request: Request, db: Session = Depends(get_db)):
         print("BLOCKED: session_id was not provided in the request.")
         raise HTTPException(status_code=400, detail="session_id is required")
 
+    detected_lang = preferred_language if preferred_language != "auto" else "en"
+
     # 1. Handle Audio input if present
     if audio_file:
         temp_dir = os.path.join(os.getcwd(), "temp")
@@ -127,7 +140,7 @@ async def process_input(request: Request, db: Session = Depends(get_db)):
             shutil.copyfileobj(audio_file.file, buffer)
             
         # Transcribe audio to text
-        text, segments = transcribe_audio(temp_path)
+        text, segments, detected_lang = transcribe_audio(temp_path, preferred_language)
         
         # Cleanup temp file
         if os.path.exists(temp_path):
@@ -139,7 +152,8 @@ async def process_input(request: Request, db: Session = Depends(get_db)):
             fallback_msg = "Hmm, I didn't quite catch that. Could you say it again?"
             return ProcessInputResponse(
                 response=fallback_msg,
-                audio_url=await text_to_speech(fallback_msg, emotion="neutral"),
+                language=detected_lang,
+                audio_url=await text_to_speech(fallback_msg, emotion="neutral", language=detected_lang),
                 session_id=session_id,
                 question="Could you say it again?",
                 question_type="generated",
@@ -190,8 +204,9 @@ async def process_input(request: Request, db: Session = Depends(get_db)):
     recent_insights_data = get_recent_insights(db, user_id)
     
     # 8. Generate response using LLM (Ollama)
-    ai_response_text, final_question = generate_response(
+    ai_response_text, final_question, actions = generate_response(
         user_text=text,
+        language=detected_lang,
         memory=memory,
         state=cog_state,
         selected_question=question,
@@ -211,7 +226,7 @@ async def process_input(request: Request, db: Session = Depends(get_db)):
     store_conversation(db, user_id, session_id, text, ai_response_text)
     
     # 9. Generate AI voice (TTS)
-    audio_url = await text_to_speech(ai_response_text, emotion=stable_emo)
+    audio_url = await text_to_speech(ai_response_text, emotion=stable_emo, language=detected_lang)
     
     # 10. Generate Unified Cognitive Insight
     generate_and_store_insights(db, user_id)
@@ -219,6 +234,7 @@ async def process_input(request: Request, db: Session = Depends(get_db)):
     # 11. Return structured output
     return ProcessInputResponse(
         response=ai_response_text,
+        language=detected_lang,
         audio_url=audio_url,
         session_id=session_id,
         question=final_question,
@@ -229,6 +245,7 @@ async def process_input(request: Request, db: Session = Depends(get_db)):
         cognitive_state=cog_state,
         cognitive_score=cog_score,
         confidence=confidence,
+        actions=actions
     )
 
 @router.get("/daily-summary")

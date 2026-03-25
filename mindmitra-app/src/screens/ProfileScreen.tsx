@@ -6,12 +6,17 @@ import { ScreenTimeTracker } from '../services/screenTimeTracker';
 import { BackgroundSyncService } from '../services/backgroundSyncService';
 import { LocationTracker } from '../services/locationTracker';
 import { LocationBackgroundService } from '../services/locationBackgroundService';
+import { ApiService } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 
 export const ProfileScreen = () => {
   const [trackingEnabled, setTrackingEnabled] = useState(false);
   const [usagePermission, setUsagePermission] = useState(false);
   const [locationEnabled, setLocationEnabled] = useState(false);
   const [locationPermission, setLocationPermission] = useState(false);
+  const [userName, setUserName] = useState('My Profile');
+  const [userEmail, setUserEmail] = useState('mindmitra_user');
+  const { user } = useAuth(); // Import useAuth from contexts if needed, else we rely on mock
 
   useEffect(() => {
     const loadState = async () => {
@@ -21,10 +26,13 @@ export const ProfileScreen = () => {
       const locEnabled = await LocationTracker.isTrackingEnabled();
       const locConsent = await LocationTracker.getConsentStatus();
       const locPermission = await LocationTracker.hasLocationPermissions();
+      const profile = await ApiService.getUserProfile();
+      
       setTrackingEnabled(enabled && consent);
       setUsagePermission(permission);
       setLocationEnabled(locEnabled && locConsent);
       setLocationPermission(locPermission);
+      if (profile?.Name) setUserName(profile.Name);
     };
     loadState();
   }, []);
@@ -74,10 +82,10 @@ export const ProfileScreen = () => {
     <View style={styles.container}>
       <View style={styles.header}>
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>V</Text>
+          <Text style={styles.avatarText}>{userName.charAt(0).toUpperCase()}</Text>
         </View>
-        <Text style={styles.name}>Vedant</Text>
-        <Text style={styles.email}>vedant@mindmitra.app</Text>
+        <Text style={styles.name}>{userName}</Text>
+        <Text style={styles.email}>{(user as any)?.email || 'Signed in'}</Text>
       </View>
 
       <View style={styles.menu}>

@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Vibration } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { Audio } from 'expo-av';
 import { Camera, CameraView } from 'expo-camera';
 import { Orb } from '../components/Orb';
 import { colors } from '../theme/theme';
 import { ApiService } from '../services/api';
+import { useCognitiveScore } from '../contexts/CognitiveScoreContext';
 
 type TalkState = 'idle' | 'listening' | 'recording' | 'processing' | 'speaking';
 
@@ -15,6 +17,10 @@ export const TalkScreen = () => {
   const [displayedAiText, setDisplayedAiText] = useState("");
   const [error, setError] = useState("");
   const [detectedEmotion, setDetectedEmotion] = useState("neutral");
+  const [preferredLanguage, setPreferredLanguage] = useState<'auto' | 'en' | 'hi' | 'mr'>('auto');
+  const [detectedLanguage, setDetectedLanguage] = useState("");
+  const [suggestedActions, setSuggestedActions] = useState<any[]>([]);
+  const navigation = useNavigation<any>();
 
   const soundRef = useRef<Audio.Sound | null>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -26,6 +32,21 @@ export const TalkScreen = () => {
   const isRecordingRef = useRef<boolean>(false);
   const emotionPollRef = useRef<NodeJS.Timeout | null>(null);
   const latestEmotionRef = useRef<string>('neutral');
+
+  const { addVaniUsage } = useCognitiveScore();
+  const sessionStartTimeRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (state !== 'idle' && sessionStartTimeRef.current === null) {
+      sessionStartTimeRef.current = Date.now();
+    } else if (state === 'idle' && sessionStartTimeRef.current !== null) {
+      const minutes = (Date.now() - sessionStartTimeRef.current) / 60000;
+      if (minutes > 0.05) { // Log if meaningful interaction happened
+        addVaniUsage(minutes);
+      }
+      sessionStartTimeRef.current = null;
+    }
+  }, [state, addVaniUsage]);
 
   useEffect(() => {
     setupAudioAndCamera();
@@ -125,6 +146,7 @@ export const TalkScreen = () => {
       setError("");
       setAiText("");
       setDisplayedAiText("");
+      setSuggestedActions([]);
       setState('listening'); // brief transition
       setTranscript("Listening...");
 
@@ -206,7 +228,7 @@ export const TalkScreen = () => {
       console.log(`[TalkScreen] Sending to backend with emotion: ${currentEmotion}`);
 
       // Send actual real .m4a audio file to backend
-      const res = await ApiService.sendAudioInput(uri, currentEmotion);
+      const res = await ApiService.sendAudioInput(uri, currentEmotion, preferredLanguage);
       
       if (!res.success) {
         setError(res.response);
@@ -218,6 +240,20 @@ export const TalkScreen = () => {
       // Voice processing success
       setState('speaking');
       setAiText(res.response);
+      
+      if (res.actions && res.actions.length > 0) {
+        setSuggestedActions(res.actions);
+        Vibration.vibrate(50);
+      } else {
+        setSuggestedActions([]);
+      }
+      
+      if (res.language && res.language !== 'en') {
+        const langMap: Record<string, string> = { hi: 'Hindi', mr: 'Marathi' };
+        setDetectedLanguage(langMap[res.language] || res.language);
+      } else {
+        setDetectedLanguage('');
+      }
       
       if (res.audio_url) {
         await playAudio(res.audio_url);
@@ -285,6 +321,25 @@ export const TalkScreen = () => {
            {state === 'idle' ? 'VANI IS SLEEPING' : state.toUpperCase() + '...'}
         </Text>
       </View>
+
+      <View style={styles.langToggleContainer}>
+        {[
+          { id: 'auto', label: 'Auto' },
+          { id: 'en', label: 'EN' },
+          { id: 'hi', label: 'हिंदी' },
+          { id: 'mr', label: 'मराठी' },
+        ].map(lang => (
+          <TouchableOpacity 
+            key={lang.id}
+            style={[styles.langBtn, preferredLanguage === lang.id && styles.langBtnActive]}
+            onPress={() => setPreferredLanguage(lang.id as any)}
+          >
+            <Text style={[styles.langText, preferredLanguage === lang.id && styles.langTextActive]}>
+              {lang.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
       
       <TouchableOpacity 
         style={styles.orbContainer} 
@@ -310,7 +365,33 @@ export const TalkScreen = () => {
         {state === 'recording' && <Text style={styles.userText}>Speak now (auto-stops on silence)</Text>}
         
         {state === 'speaking' && (
-          <Text style={styles.aiText}>{displayedAiText}</Text>
+          <View style={{ alignItems: 'center' }}>
+            {detectedLanguage ? (
+              <View style={styles.langBadge}>
+                <Text style={styles.langBadgeText}>{detectedLanguage}</Text>
+              </View>
+            ) : null}
+            <Text style={styles.aiText}>{displayedAiText}</Text>
+            
+            {suggestedActions.length > 0 && displayedAiText.length === aiText.length && (
+              <View style={{ marginTop: 24, gap: 12 }}>
+                {suggestedActions.map((action, i) => (
+                  <TouchableOpacity 
+                    key={i}
+                    style={styles.actionBtn}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                        navigation.navigate("Activities", { activityId: action.id });
+                    }}
+                  >
+                    <Text style={styles.actionBtnText}>
+                       {action.type === 'game' ? '🎮 Play Game' : '🧘 Start Exercise'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
         )}
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
       </View>
@@ -343,5 +424,14 @@ const styles = StyleSheet.create({
   aiText: { fontSize: 24, color: colors.primary, textAlign: 'center', fontWeight: '700', lineHeight: 34 },
   errorText: { fontSize: 14, color: '#D9534F', textAlign: 'center', marginTop: 12, fontWeight: '500' },
   stopBtn: { backgroundColor: colors.card, paddingVertical: 12, paddingHorizontal: 24, borderRadius: 20, borderWidth: 1, borderColor: colors.border },
-  stopBtnText: { color: colors.subText, fontWeight: '600' }
+  stopBtnText: { color: colors.subText, fontWeight: '600' },
+  langToggleContainer: { flexDirection: 'row', justifyContent: 'center', marginTop: 15, backgroundColor: colors.card, alignSelf: 'center', borderRadius: 20, padding: 4, borderWidth: 1, borderColor: colors.border },
+  langBtn: { paddingVertical: 6, paddingHorizontal: 16, borderRadius: 16 },
+  langBtnActive: { backgroundColor: colors.primary + '20' },
+  langText: { fontSize: 12, color: colors.subText, fontWeight: '600' },
+  langTextActive: { color: colors.primary, fontWeight: '700' },
+  langBadge: { backgroundColor: colors.primary + '15', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12, marginBottom: 10 },
+  langBadgeText: { color: colors.primary, fontSize: 11, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase' },
+  actionBtn: { backgroundColor: colors.pastel.lavender, paddingVertical: 14, paddingHorizontal: 30, borderRadius: 24, borderWidth: 1, borderColor: colors.primary + '40', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 4 },
+  actionBtnText: { color: colors.primary, fontWeight: '800', fontSize: 16 }
 });

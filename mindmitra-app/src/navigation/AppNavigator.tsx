@@ -6,6 +6,7 @@ import { Orb } from '../components/Orb';
 import { colors } from '../theme/theme';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { ActivityProvider } from '../contexts/ActivityContext';
+import { CognitiveScoreProvider } from '../contexts/CognitiveScoreContext';
 
 // Layout Imports
 import { LoginScreen } from '../screens/LoginScreen';
@@ -35,7 +36,9 @@ export const AppNavigator = () => {
   return (
     <AuthProvider>
       <ActivityProvider>
-        <MainApp />
+        <CognitiveScoreProvider>
+          <MainApp />
+        </CognitiveScoreProvider>
       </ActivityProvider>
     </AuthProvider>
   );

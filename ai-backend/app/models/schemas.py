@@ -120,6 +120,7 @@ class ProcessInputRequest(BaseModel):
     user_id: str
     session_id: str
     text: str
+    preferred_language: Optional[str] = "auto"
 
 class UserProfileCreate(BaseModel):
     user_id: str
@@ -131,6 +132,7 @@ class UserProfileCreate(BaseModel):
 
 class ProcessInputResponse(BaseModel):
     response: str
+    language: str = "en"
     audio_url: Optional[str] = None
     session_id: str
     question: str
@@ -142,6 +144,7 @@ class ProcessInputResponse(BaseModel):
     cognitive_score: Optional[int] = None
     confidence: Optional[float] = None
     speech_analysis: Optional[Dict] = None
+    actions: Optional[List[Dict]] = None
 
 class AppUsageItemIn(BaseModel):
     packageName: str

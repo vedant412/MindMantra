@@ -50,6 +50,17 @@ export const OnboardingScreen = () => {
     }
   };
 
+  const handlePrev = () => {
+    if (step > 0) {
+      Animated.timing(fadeAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
+        const prevStep = step - 1;
+        setStep(prevStep);
+        setCurrentText(answers[QUESTIONS[prevStep].id] || '');
+        Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
+      });
+    }
+  };
+
   const finishOnboarding = async (finalAnswers: any) => {
     setSaving(true);
     // Send to backend endpoint
@@ -78,11 +89,7 @@ export const OnboardingScreen = () => {
               <TouchableOpacity 
                 key={opt}
                 style={[styles.optionCard, currentText === opt && styles.optionCardActive]}
-                onPress={() => {
-                  setCurrentText(opt);
-                  // Optional: Auto-advance after 300ms for MCQ
-                  setTimeout(() => handleNext(opt), 300);
-                }}
+                onPress={() => setCurrentText(opt)}
               >
                 <Text style={[styles.optionText, currentText === opt && styles.optionTextActive]}>{opt}</Text>
               </TouchableOpacity>
@@ -101,17 +108,29 @@ export const OnboardingScreen = () => {
           />
         )}
         
-        {!q.options && (
+        <View style={styles.navRow}>
+          {step > 0 ? (
+            <TouchableOpacity 
+              style={[styles.btn, styles.prevBtn]} 
+              onPress={handlePrev}
+              disabled={saving}
+            >
+              <Text style={[styles.btnText, { color: colors.text }]}>Back</Text>
+            </TouchableOpacity>
+          ) : (
+            <View style={{ flex: 1 }} />
+          )}
+
           <TouchableOpacity 
-            style={[styles.btn, !currentText.trim() && styles.btnDisabled]} 
+            style={[styles.btn, { flex: 2 }, !currentText.trim() && styles.btnDisabled]} 
             onPress={() => handleNext()}
             disabled={!currentText.trim() || saving}
           >
             <Text style={styles.btnText}>
-              {saving ? 'Creating Profile...' : (step === QUESTIONS.length - 1 ? 'Get Started' : 'Continue')}
+              {saving ? 'Wait...' : (step === QUESTIONS.length - 1 ? 'Get Started' : 'Next')}
             </Text>
           </TouchableOpacity>
-        )}
+        </View>
       </Animated.View>
     </KeyboardAvoidingView>
   );
@@ -131,6 +150,8 @@ const styles = StyleSheet.create({
   optionText: { fontSize: 18, color: colors.text, fontWeight: '500' },
   optionTextActive: { color: colors.primary, fontWeight: '700' },
   btn: { backgroundColor: colors.primary, paddingVertical: 18, borderRadius: 16, alignItems: 'center', shadowColor: colors.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8, elevation: 5 },
+  navRow: { flexDirection: 'row', gap: 12, marginTop: 10 },
+  prevBtn: { flex: 1, backgroundColor: colors.border, shadowOpacity: 0, elevation: 0 },
   btnDisabled: { backgroundColor: colors.border, shadowOpacity: 0, elevation: 0 },
   btnText: { color: colors.background, fontWeight: '700', fontSize: 18, letterSpacing: 0.5 }
 });

@@ -10,22 +10,27 @@ const DEFAULT_BACKEND_PORT = 8000;
  * Resolve backend base URL (no trailing slash).
  */
 function resolveApiBaseUrl(): string {
-  const fromEnv = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
-  if (fromEnv) return fromEnv.replace(/\/$/, '');
+  let fromEnv = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
+  if (fromEnv) {
+    fromEnv = fromEnv.replace(/['"]+/g, '');
+    return fromEnv.replace(/\/$/, '');
+  }
 
   const port = DEFAULT_BACKEND_PORT;
   if (__DEV__) {
     if (Platform.OS === 'android') {
       if (Constants.isDevice) {
-        return `http://127.0.0.1:${port}`;
+        // Physical phone over Wi-Fi
+        return `http://10.105.151.236:${port}`;
       }
+      // Android Emulator loopback alias
       return `http://10.0.2.2:${port}`;
     }
     if (Platform.OS === 'ios') {
       return `http://localhost:${port}`;
     }
   }
-  return `http://127.0.0.1:${port}`;
+  return `http://10.105.151.236:${port}`;
 }
 
 const API_BASE_URL = resolveApiBaseUrl();
@@ -74,6 +79,16 @@ export const ApiService = {
       console.warn('[API] Submit Profile FAILED:', e);
       return false;
     }
+  },
+
+  getUserProfile: async (options?: RequestInit) => {
+    try {
+      const res = await fetchWithTimeout(`${API_BASE_URL}/user-profile?user_id=${globalUserId}`, options);
+      if (res.ok) return await res.json();
+    } catch (e: any) {
+      if (e.name !== 'AbortError') console.warn('[API] Get Profile FAILED:', e);
+    }
+    return {};
   },
 
   getDailySummary: async (options?: RequestInit) => {
@@ -179,9 +194,9 @@ export const ApiService = {
     }
   },
 
-  sendTextInput: async (text: string, emotion: string = 'neutral') => {
+  sendTextInput: async (text: string, emotion: string = 'neutral', preferredLanguage: string = 'auto') => {
     try {
-      console.log(`[API] Sending text input. session=${SESSION_ID}, emotion=${emotion}`);
+      console.log(`[API] Sending text input. session=${SESSION_ID}, emotion=${emotion}, lang=${preferredLanguage}`);
       const res = await fetchWithTimeout(`${API_BASE_URL}/process-input`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -189,7 +204,8 @@ export const ApiService = {
           user_id: globalUserId,
           session_id: SESSION_ID,
           text: text,
-          emotion: emotion
+          emotion: emotion,
+          preferred_language: preferredLanguage
         })
       }, 30000);
 
@@ -209,17 +225,20 @@ export const ApiService = {
         emotion: data.emotion,
         state: data.state,
         question: data.question,
+        language: data.language,
+        actions: data.actions || []
       };
     } catch (e) {
       return { success: false, response: 'Something went wrong… try again.' };
     }
   },
 
-  sendAudioInput: async (audioUri: string, emotion: string = 'neutral') => {
+  sendAudioInput: async (audioUri: string, emotion: string = 'neutral', preferredLanguage: string = 'auto') => {
     const formData = new FormData();
     formData.append('user_id', globalUserId);
     formData.append('session_id', SESSION_ID);
     formData.append('emotion', emotion);
+    formData.append('preferred_language', preferredLanguage);
 
     // Some phones don't add the extension, so default to .m4a
     const filename = audioUri.split('/').pop() || 'recording.m4a';
@@ -232,11 +251,11 @@ export const ApiService = {
     } as any);
 
     try {
-      console.log(`[API] Sending audio input. session=${SESSION_ID}, emotion=${emotion}`);
+      console.log(`[API] Sending audio input. session=${SESSION_ID}, emotion=${emotion}, lang=${preferredLanguage}`);
       const res = await fetchWithTimeout(`${API_BASE_URL}/process-input`, {
         method: 'POST',
         body: formData
-      }, 30000); // 30s timeout
+      }, 60000); // 60s timeout for CPU Whisper model
 
       if (!res.ok) return { success: false, response: 'Backend error… try again.', audio_url: null };
 
@@ -253,7 +272,9 @@ export const ApiService = {
         audio_url: fullAudioUrl,
         emotion: data.emotion,
         state: data.state,
-        question: data.question
+        question: data.question,
+        language: data.language,
+        actions: data.actions || []
       };
     } catch (e) {
       return { success: false, response: 'Something went wrong… try again.', audio_url: null };

@@ -76,9 +76,9 @@ def prepare_text(text: str) -> str:
         
     return text
 
-async def text_to_speech(text: str, emotion: Optional[str] = None) -> Optional[str]:
+async def text_to_speech(text: str, emotion: Optional[str] = None, language: str = "en") -> Optional[str]:
     """
-    Synthesizes and saves AI voice locally via the Microsoft Edge API (JennyNeural).
+    Synthesizes and saves AI voice locally via the Microsoft Edge API.
     Runs completely asynchronously inside FastAPI to prevent thread blocking.
     """
     
@@ -90,7 +90,12 @@ async def text_to_speech(text: str, emotion: Optional[str] = None) -> Optional[s
         return ""
         
     # Default parameters based on user rules
-    voice = "en-US-JennyNeural"
+    voice_map = {
+        "en": "en-US-JennyNeural",
+        "hi": "hi-IN-SwaraNeural",
+        "mr": "mr-IN-AarohiNeural"
+    }
+    voice = voice_map.get(language, "en-US-JennyNeural")
     rate = "+10%"
     pitch = "-2Hz"
     
