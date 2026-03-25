@@ -1,12 +1,12 @@
-import requests
-from typing import Dict, Optional
+import requests  # type: ignore
+from typing import Dict, Optional, Tuple, List, Any
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
 def generate_response(
     user_text: str, 
     language: str = "en",
-    memory: Dict = None, 
+    memory: Optional[Dict[str, Any]] = None, 
     state: str = "normal", 
     selected_question: str = "", 
     emotion: Optional[str] = None,
@@ -24,6 +24,9 @@ def generate_response(
     Generates a response using Ollama API.
     Returns (response_text, generated_question, actions_array)
     """
+    if memory is None:
+        memory = {}
+        
     facts_str = "\n".join([f"* {k}: {v}" for k, v in memory.get("facts", {}).items()])
     
     events_str = ""
@@ -194,9 +197,10 @@ Example JSON:
             cut_index = max(last_period, last_question, last_exclaim)
             cut_idx_int = int(cut_index + 1)
             if cut_index > 10:
-                full_response = truncated[:cut_idx_int]
+                short_str = str(truncated)
+                full_response = short_str[:cut_idx_int]  # type: ignore
             else:
-                full_response = truncated + "..."
+                full_response = str(truncated) + "..."
                 
             # Safely re-inject memory question if it was severed
             if selected_question and selected_question not in full_response:

@@ -1,13 +1,13 @@
 import os
 import uuid
 import shutil
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, Query
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, Query  # type: ignore
+from sqlalchemy.orm import Session  # type: ignore
 from datetime import date
-from typing import Optional
+from typing import Optional, Dict, Any
 from collections import defaultdict
-from app.db.database import get_db
-from app.models.schemas import (
+from app.db.database import get_db  # type: ignore
+from app.models.schemas import (  # type: ignore
     ProcessInputRequest,
     ProcessInputResponse,
     UserFact,
@@ -20,19 +20,19 @@ from app.models.schemas import (
     VisitedPlace,
 )
 
-from app.services.memory_service import get_user_memory, extract_and_store_facts, store_conversation, store_cognitive_history, get_daily_summary, extract_user_events, store_user_events
-from app.services.insight_service import generate_and_store_insights, get_recent_insights
-from app.services.sentiment_service import analyze_sentiment
-from app.services.state_service import determine_state
-from app.services.question_service import get_next_question, detect_answer
-from app.services.llm_service import generate_response
-from app.services.speech_service import transcribe_audio
-from app.services.tts_service import text_to_speech
-from app.services.speech_analysis_service import analyze_speech
-from app.services.cognitive_service import calculate_cognitive_score
-from app.services.time_service import get_time_context
-from app.services.emotion_service import detect_emotion_from_base64
-from pydantic import BaseModel
+from app.services.memory_service import get_user_memory, extract_and_store_facts, store_conversation, store_cognitive_history, get_daily_summary, extract_user_events, store_user_events  # type: ignore
+from app.services.insight_service import generate_and_store_insights, get_recent_insights  # type: ignore
+from app.services.sentiment_service import analyze_sentiment  # type: ignore
+from app.services.state_service import determine_state  # type: ignore
+from app.services.question_service import get_next_question, detect_answer  # type: ignore
+from app.services.llm_service import generate_response  # type: ignore
+from app.services.speech_service import transcribe_audio  # type: ignore
+from app.services.tts_service import text_to_speech  # type: ignore
+from app.services.speech_analysis_service import analyze_speech  # type: ignore
+from app.services.cognitive_service import calculate_cognitive_score  # type: ignore
+from app.services.time_service import get_time_context  # type: ignore
+from app.services.emotion_service import detect_emotion_from_base64  # type: ignore
+from pydantic import BaseModel  # type: ignore
 from datetime import datetime, timezone
 
 router = APIRouter()
@@ -262,8 +262,8 @@ def get_insights_endpoint(user_id: str = Query(...), db: Session = Depends(get_d
 
 @router.post("/screen-time/sync")
 def sync_screen_time(payload: ScreenTimeSyncRequest, db: Session = Depends(get_db)):
-    created_snapshots = 0
-    created_app_rows = 0
+    created_snapshots = 0  # type: ignore
+    created_app_rows = 0  # type: ignore
     for snap in payload.snapshots:
         captured_at_dt = datetime.fromtimestamp(snap.capturedAt / 1000, tz=timezone.utc)
         snapshot_row = ScreenTimeSnapshot(
@@ -290,7 +290,7 @@ def sync_screen_time(payload: ScreenTimeSyncRequest, db: Session = Depends(get_d
                 last_timestamp=datetime.fromtimestamp(app.lastTimeStamp / 1000, tz=timezone.utc),
             )
             db.add(app_row)
-            created_app_rows += 1
+            created_app_rows = int(created_app_rows) + 1  # type: ignore
 
     db.commit()
     return {"ok": True, "created_snapshots": created_snapshots, "created_app_rows": created_app_rows}
@@ -349,15 +349,16 @@ def get_location_insights_endpoint(user_id: str = Query(...), limit: int = Query
         for v in reversed(visits)
     ]
 
-    freq = defaultdict(lambda: {"place_name": "", "category": "", "visits": 0, "total_duration_ms": 0})
+    freq: Dict[str, Any] = defaultdict(lambda: {"place_name": "", "category": "", "visits": 0, "total_duration_ms": 0})
     for v in visits:
         key = f"{v.place_name}|{v.category}"
         freq[key]["place_name"] = v.place_name
         freq[key]["category"] = v.category
-        freq[key]["visits"] += 1
-        freq[key]["total_duration_ms"] += v.duration_ms
+        freq[key]["visits"] = int(freq[key]["visits"]) + 1
+        freq[key]["total_duration_ms"] = int(freq[key]["total_duration_ms"]) + int(v.duration_ms)
 
-    frequent_places = sorted(freq.values(), key=lambda x: (x["visits"], x["total_duration_ms"]), reverse=True)[:5]
+    sorted_places = sorted(freq.values(), key=lambda x: (int(x["visits"]), int(x["total_duration_ms"])), reverse=True)
+    frequent_places = sorted_places[:5]  # type: ignore
     park_visits = sum(1 for v in visits if v.category == "park")
     off_hour_visits = sum(1 for v in visits if v.entry_time.hour <= 5 or v.entry_time.hour >= 23)
 

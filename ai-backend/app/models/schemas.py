@@ -1,7 +1,7 @@
-from sqlalchemy import Column, Integer, String, DateTime, Float, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, Float, Boolean  # type: ignore
 from datetime import datetime, timezone
-from app.db.database import Base
-from pydantic import BaseModel
+from app.db.database import Base  # type: ignore
+from pydantic import BaseModel  # type: ignore
 from typing import Optional, Dict, List
 
 # --- SQLAlchemy Models ---
