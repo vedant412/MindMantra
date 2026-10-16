@@ -1,7 +1,8 @@
 import os
 import uuid
 import shutil
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, Query  # type: ignore
+import time
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, Query  # type: ignore
 from sqlalchemy.orm import Session  # type: ignore
 from datetime import date
 from typing import Optional, Dict, Any
@@ -32,6 +33,9 @@ from app.services.speech_analysis_service import analyze_speech  # type: ignore
 from app.services.cognitive_service import calculate_cognitive_score  # type: ignore
 from app.services.time_service import get_time_context  # type: ignore
 from app.services.emotion_service import detect_emotion_from_base64  # type: ignore
+from app.services.cache_service import build_cache_key, get_cached_response, set_cached_response  # type: ignore
+from app.services.template_service import get_template_response  # type: ignore
+from app.services.monitor_service import log_request_timing, get_stats_summary, RequestTimer  # type: ignore
 from pydantic import BaseModel  # type: ignore
 from datetime import datetime, timezone
 
@@ -75,8 +79,13 @@ def get_user_profile(user_id: str = Query(...), db: Session = Depends(get_db)):
         profile[f.key] = f.value
     return profile
 
+@router.get("/perf-stats")
+def perf_stats():
+    """Returns real-time cache hit rate and latency stats."""
+    return get_stats_summary()
+
 @router.post("/process-input", response_model=ProcessInputResponse)
-async def process_input(request: Request, db: Session = Depends(get_db)):
+async def process_input(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     content_type = request.headers.get("Content-Type", "")
     
     user_id = None
@@ -129,6 +138,7 @@ async def process_input(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="session_id is required")
 
     detected_lang = preferred_language if preferred_language != "auto" else "en"
+    t_start = time.perf_counter()
 
     # 1. Handle Audio input if present
     if audio_file:
@@ -165,46 +175,100 @@ async def process_input(request: Request, db: Session = Depends(get_db)):
         else:
             print("BLOCKED: Both text and audio_file were empty or missing.")
             raise HTTPException(status_code=400, detail="Text or audio_file cannot be empty")
-        
+
     confidence = None
     speech_analysis_data = None
-    
+
     if audio_file and 'segments' in locals():
         speech_analysis_data = analyze_speech(text, segments)
         confidence = speech_analysis_data["confidence"]
-        
+
     # 2. Analyze sentiment
     sentiment = analyze_sentiment(text)
-    
-    # 3. Extract new facts from user text
-    extract_and_store_facts(db, user_id, text)
-    detect_answer(db, user_id, text)
-    
-    # 3b. Extract behavioral activity strings directly
-    recent_tracked_events = extract_user_events(text)
-    store_user_events(db, user_id, recent_tracked_events)
 
-    # 4. Fetch updated user memory scoped to this session
-    memory = get_user_memory(db, user_id, session_id)
-    
-    # 5. Cognitive Scoring System
+    # 3. Cognitive scoring (needed for cache key / template context)
     cog_score, cog_state, stable_emo = calculate_cognitive_score(session_id, confidence, sentiment, emotion)
-    store_cognitive_history(db, user_id, session_id, cog_score, cog_state, emotion=stable_emo, confidence=confidence)
-    
-    # 6. Fetch Time Context
+
+    # ─── FAST PATH A: Response Template (no LLM, no cache) ──────────────────
+    memory_for_name = get_user_memory(db, user_id, session_id)
+    user_name = memory_for_name.get("facts", {}).get("Name", "Friend")
+    template_result = get_template_response(text, detected_lang, user_name)
+    if template_result:
+        tmpl_text, tmpl_question, tmpl_actions = template_result
+        elapsed = (time.perf_counter() - t_start) * 1000
+        log_request_timing("template_hit", elapsed, user_id)
+        audio_url = await text_to_speech(tmpl_text, emotion=stable_emo, language=detected_lang)
+        # Persist conversation + cognitive state in background
+        background_tasks.add_task(store_conversation, db, user_id, session_id, text, tmpl_text)
+        background_tasks.add_task(store_cognitive_history, db, user_id, session_id, cog_score, cog_state, stable_emo, confidence)
+        return ProcessInputResponse(
+            response=tmpl_text,
+            language=detected_lang,
+            audio_url=audio_url,
+            session_id=session_id,
+            question=tmpl_question,
+            question_type="template",
+            sentiment=sentiment,
+            state=cog_state,
+            emotion=stable_emo,
+            cognitive_state=cog_state,
+            cognitive_score=cog_score,
+            confidence=confidence,
+            actions=tmpl_actions
+        )
+
+    # ─── FAST PATH B: Redis Cache ────────────────────────────────────────────
+    cache_key = build_cache_key(text, detected_lang)
+    cached = get_cached_response(cache_key)
+    if cached:
+        elapsed = (time.perf_counter() - t_start) * 1000
+        log_request_timing("cache_hit", elapsed, user_id)
+        audio_url = await text_to_speech(cached["response"], emotion=stable_emo, language=detected_lang)
+        return ProcessInputResponse(
+            response=cached["response"],
+            language=detected_lang,
+            audio_url=audio_url,
+            session_id=session_id,
+            question=cached.get("question", "How are you feeling?"),
+            question_type="cached",
+            sentiment=sentiment,
+            state=cog_state,
+            emotion=stable_emo,
+            cognitive_state=cog_state,
+            cognitive_score=cog_score,
+            confidence=confidence,
+            actions=cached.get("actions", [])
+        )
+
+    # ─── STANDARD PATH: Full LLM Pipeline ───────────────────────────────────
+
+    # Kick off non-critical DB writes in background (before LLM call)
+    background_tasks.add_task(extract_and_store_facts, db, user_id, text)
+    background_tasks.add_task(detect_answer, db, user_id, text)
+    recent_tracked_events = extract_user_events(text)
+    if recent_tracked_events:
+        background_tasks.add_task(store_user_events, db, user_id, recent_tracked_events)
+
+    # Fetch memory (needed for LLM prompt)
+    memory = get_user_memory(db, user_id, session_id)
+
+    # Store cognitive history in background
+    background_tasks.add_task(
+        store_cognitive_history, db, user_id, session_id, cog_score, cog_state, stable_emo, confidence
+    )
+
+    # Fetch Time Context
     current_time, time_of_day, ask_time_q = get_time_context()
-    
-    # 7. Select question (Now mathematically bounded + temporally aware)
+
+    # Select question
     question, q_type = get_next_question(db, user_id, time_of_day)
-    
-    # Fetch today's aggregate overview
+
+    # Aggregate context
     daily_summary_data = get_daily_summary(db, user_id)
-    
-    # Fetch recent overarching AI insights to pass into the LLM logic
     recent_insights_data = get_recent_insights(db, user_id)
-    
-    # 8. Generate response using LLM (Ollama)
-    ai_response_text, final_question, actions = generate_response(
+
+    # Async LLM call (non-blocking)
+    ai_response_text, final_question, actions = await generate_response(
         user_text=text,
         language=detected_lang,
         memory=memory,
@@ -221,17 +285,26 @@ async def process_input(request: Request, db: Session = Depends(get_db)):
         daily_summary=daily_summary_data,
         recent_insights=recent_insights_data
     )
-    
-    # 9. Store conversation locally in this session
+
+    elapsed = (time.perf_counter() - t_start) * 1000
+    log_request_timing("llm_call", elapsed, user_id)
+
+    # Store conversation (synchronous — we don't want to lose this)
     store_conversation(db, user_id, session_id, text, ai_response_text)
-    
-    # 9. Generate AI voice (TTS)
+
+    # Cache the response for future identical queries
+    set_cached_response(cache_key, {
+        "response": ai_response_text,
+        "question": final_question,
+        "actions": actions,
+    }, text)
+
+    # TTS generation
     audio_url = await text_to_speech(ai_response_text, emotion=stable_emo, language=detected_lang)
-    
-    # 10. Generate Unified Cognitive Insight
-    generate_and_store_insights(db, user_id)
-    
-    # 11. Return structured output
+
+    # Heavy analytics in background (non-blocking)
+    background_tasks.add_task(generate_and_store_insights, db, user_id)
+
     return ProcessInputResponse(
         response=ai_response_text,
         language=detected_lang,

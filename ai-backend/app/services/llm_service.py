@@ -1,50 +1,75 @@
-import requests  # type: ignore
+import json
+import logging
+import asyncio
 from typing import Dict, Optional, Tuple, List, Any
+
+logger = logging.getLogger(__name__)
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
-def generate_response(
-    user_text: str, 
-    language: str = "en",
-    memory: Optional[Dict[str, Any]] = None, 
-    state: str = "normal", 
-    selected_question: str = "", 
-    emotion: Optional[str] = None,
-    cognitive_score: Optional[int] = None,
-    cognitive_state: Optional[str] = None,
-    sentiment: Optional[str] = None,
-    confidence: Optional[float] = None,
-    current_time: Optional[str] = None,
-    time_of_day: Optional[str] = None,
-    ask_time_q: bool = False,
-    daily_summary: Optional[dict] = None,
-    recent_insights: Optional[list[str]] = None
-) -> tuple[str, str, list]:
-    """
-    Generates a response using Ollama API.
-    Returns (response_text, generated_question, actions_array)
-    """
-    if memory is None:
-        memory = {}
-        
+# Tunable constants
+MAX_CHAT_EXCHANGES = 4        # Last N user↔AI pairs kept in prompt
+MAX_INPUT_CHARS    = 300      # Truncate user_text before prompt building
+LLM_TIMEOUT_SECS  = 10.0     # Hard timeout for Ollama HTTP call
+LLM_SOFT_TIMEOUT  = 2.0      # Soft target (for fallback trigger in route)
+
+FALLBACK_RESPONSES = {
+    "en": ("Hmm... my brain is a little fuzzy right now. Want to try a quick breathing exercise?",
+           "Can we try that again?", [{"type": "exercise", "id": "breathing"}]),
+    "hi": ("उफ़... मेरा दिमाग थोड़ा उलझा हुआ है। क्या हम एक breathing exercise try करें?",
+           "क्या हम फिर से try करें?", [{"type": "exercise", "id": "breathing"}]),
+    "mr": ("अरे... माझं डोकं थोडं गोंधळलंय. एक breathing exercise करून बघूया का?",
+           "परत प्रयत्न करूया का?", [{"type": "exercise", "id": "breathing"}]),
+}
+
+
+def _get_fallback(language: str, selected_question: str) -> tuple:
+    fb = FALLBACK_RESPONSES.get(language, FALLBACK_RESPONSES["en"])
+    q = selected_question if selected_question else fb[1]
+    return fb[0], q, fb[2]
+
+
+def _build_prompt(
+    user_text: str,
+    language: str,
+    memory: Dict[str, Any],
+    state: str,
+    selected_question: str,
+    emotion: Optional[str],
+    cognitive_score: Optional[int],
+    cognitive_state: Optional[str],
+    sentiment: Optional[str],
+    confidence: Optional[float],
+    current_time: Optional[str],
+    time_of_day: Optional[str],
+    ask_time_q: bool,
+    daily_summary: Optional[dict],
+    recent_insights: Optional[List[str]],
+) -> str:
+    """Builds the full LLM prompt. Kept synchronous — pure string work."""
+
+    # --- Token trimming: cap history to last MAX_CHAT_EXCHANGES pairs ---
     facts_str = "\n".join([f"* {k}: {v}" for k, v in memory.get("facts", {}).items()])
-    
-    events_str = ""
+
     events_list = memory.get("recent_events", [])
+    events_str = ""
     if events_list:
-        events_str = "Recent activities:\n" + "\n".join([f"* {e['category']}: {e['value']}" for e in events_list])
-    
-    # Build recent conversation string
-    recent_chats = memory.get("recent_chats", [])
+        events_str = "Recent activities:\n" + "\n".join(
+            [f"* {e['category']}: {e['value']}" for e in events_list]
+        )
+
+    # Only keep last MAX_CHAT_EXCHANGES exchanges to control token size
+    recent_chats = memory.get("recent_chats", [])[-MAX_CHAT_EXCHANGES:]
     chat_lines = []
     for c in recent_chats:
         chat_lines.append(f"User: {c['user']}")
         chat_lines.append(f"AI: {c['ai']}")
-        
-    # Append the current input
-    chat_lines.append(f"User: {user_text}")
+
+    # Truncate current input to avoid runaway token counts
+    safe_user_text = user_text[:MAX_INPUT_CHARS]
+    chat_lines.append(f"User: {safe_user_text}")
     chats_str = "\n".join(chat_lines)
-    
+
     advanced_context = ""
     if emotion and emotion != "neutral":
         is_mismatch = (sentiment == "positive" and emotion in ["stressed", "sad", "angry"])
@@ -71,7 +96,7 @@ Instruction: Use this macro context subtly in conversation.
     if recent_insights:
         insights_context = "Recent insights:\n" + "\n".join([f"* {i}" for i in recent_insights])
         insights_context += "\nInstruction: Use insights subtly when relevant. Do not force them into every response."
-        
+
     length_instruction = "Keep your response extremely SHORT (1-2 sentences max). Be conversational."
     if emotion in ["stressed", "sad", "disgust", "fear"]:
         length_instruction = "Keep your response SHORT to MEDIUM (2-3 sentences max). Be highly supportive, empathetic, and gentle."
@@ -143,83 +168,122 @@ CONTEXTUAL ACTION LOGIC:
 Example JSON:
 {{
   "text": "It sounds like you're stressed. Let's do a quick breathing exercise.",
-  "actions": [{{ "type": "exercise", "id": "breathing" }}]
+  "actions": [{{"type": "exercise", "id": "breathing"}}]
 }}"""
-    
-    # In case there's a specialized DB question to ask
+
     if selected_question:
         prompt += f"\n\nYou MUST end your response by asking THIS specific question translated to {lang_name} (in native script): '{selected_question}'"
 
+    return prompt
+
+
+def _parse_llm_output(raw_output: str, selected_question: str) -> tuple:
+    """Parse and post-process LLM JSON output. Returns (text, question, actions)."""
+    # Strip markdown fences if present
+    for prefix in ("```json", "```"):
+        if raw_output.startswith(prefix):
+            raw_output = raw_output[len(prefix):]
+            break
+    if raw_output.endswith("```"):
+        raw_output = raw_output[:-3]
+    raw_output = raw_output.strip()
+
+    actions_list = []
+    try:
+        parsed_json = json.loads(raw_output)
+        full_response = parsed_json.get("text", "")
+        actions_list = parsed_json.get("actions", [])
+    except json.JSONDecodeError:
+        full_response = raw_output
+        actions_list = []
+
+    if not full_response:
+        full_response = raw_output
+
+    # Hard-stop word trimming (40 words max)
+    words = full_response.split()
+    if len(words) > 40:
+        truncated = " ".join(words[:40])
+        cut_index = max(truncated.rfind("."), truncated.rfind("?"), truncated.rfind("!"))
+        if cut_index > 10:
+            full_response = truncated[:cut_index + 1]
+        else:
+            full_response = truncated + "..."
+        if selected_question and selected_question not in full_response:
+            full_response += f" {selected_question}"
+
+    # Extract generated question if none was provided
+    generated_q = selected_question
+    if not selected_question:
+        sentences = full_response.replace('\n', ' ').split('.')
+        for s in reversed(sentences):
+            if '?' in s:
+                generated_q = s.strip() + '?'
+                break
+        if not generated_q:
+            generated_q = "What's been going on?"
+
+    return full_response, generated_q, actions_list
+
+
+async def generate_response(
+    user_text: str,
+    language: str = "en",
+    memory: Optional[Dict[str, Any]] = None,
+    state: str = "normal",
+    selected_question: str = "",
+    emotion: Optional[str] = None,
+    cognitive_score: Optional[int] = None,
+    cognitive_state: Optional[str] = None,
+    sentiment: Optional[str] = None,
+    confidence: Optional[float] = None,
+    current_time: Optional[str] = None,
+    time_of_day: Optional[str] = None,
+    ask_time_q: bool = False,
+    daily_summary: Optional[dict] = None,
+    recent_insights: Optional[List[str]] = None
+) -> Tuple[str, str, list]:
+    """
+    Async LLM response generator using httpx.
+    Returns (response_text, generated_question, actions_array).
+    Falls back gracefully on timeout or error.
+    """
+    if memory is None:
+        memory = {}
+
+    prompt = _build_prompt(
+        user_text=user_text,
+        language=language,
+        memory=memory,
+        state=state,
+        selected_question=selected_question,
+        emotion=emotion,
+        cognitive_score=cognitive_score,
+        cognitive_state=cognitive_state,
+        sentiment=sentiment,
+        confidence=confidence,
+        current_time=current_time,
+        time_of_day=time_of_day,
+        ask_time_q=ask_time_q,
+        daily_summary=daily_summary,
+        recent_insights=recent_insights,
+    )
+
     payload = {
-        "model": "mistral", # standard model placeholder
+        "model": "mistral",
         "prompt": prompt,
         "stream": False
     }
-    
+
     try:
-        response = requests.post(OLLAMA_URL, json=payload, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-        raw_output = data.get("response", "").strip()
-        
-        # Strip markdown if LLM wrapped it
-        if raw_output.startswith("```json"):
-            raw_output = raw_output[7:]
-        if raw_output.startswith("```"):
-            raw_output = raw_output[3:]
-        if raw_output.endswith("```"):
-            raw_output = raw_output[:-3]
-            
-        raw_output = raw_output.strip()
-        
-        actions_list = []
-        try:
-            import json
-            parsed_json = json.loads(raw_output)
-            full_response = parsed_json.get("text", "")
-            actions_list = parsed_json.get("actions", [])
-        except json.JSONDecodeError:
-            # Fallback if the LLM completely failed JSON
-            full_response = raw_output
-            actions_list = []
-        
-        if not full_response:
-            full_response = raw_output # Hard fallback
-            
-        # Hard-Stop Word Trimming Post-Processor
-        words = full_response.split()
-        if len(words) > 40:
-            truncated = " ".join(words[:40])
-            last_period = truncated.rfind(".")
-            last_question = truncated.rfind("?")
-            last_exclaim = truncated.rfind("!")
-            
-            cut_index = max(last_period, last_question, last_exclaim)
-            cut_idx_int = int(cut_index + 1)
-            if cut_index > 10:
-                short_str = str(truncated)
-                full_response = short_str[:cut_idx_int]  # type: ignore
-            else:
-                full_response = str(truncated) + "..."
-                
-            # Safely re-inject memory question if it was severed
-            if selected_question and selected_question not in full_response:
-                full_response += f" {selected_question}"
-        
-        # Extract generated question if needed
-        generated_q = selected_question
-        if not selected_question:
-            sentences = full_response.replace('\n', ' ').split('.')
-            for s in reversed(sentences):
-                if '?' in s:
-                    generated_q = s.strip() + '?'
-                    break
-            if not generated_q:
-                generated_q = "What's been going on?"
-                
-        return full_response, generated_q, actions_list
+        import httpx
+        async with httpx.AsyncClient(timeout=LLM_TIMEOUT_SECS) as client:
+            response = await client.post(OLLAMA_URL, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            raw_output = data.get("response", "").strip()
+            return _parse_llm_output(raw_output, selected_question)
 
     except Exception as e:
-        print(f"Ollama Error: {e}")
-        return ("Hmm... my brain is a little fuzzy right now.", 
-                selected_question if selected_question else "Can we try that again?", [])
+        logger.warning(f"[LLM] Ollama error: {type(e).__name__}: {e}")
+        return _get_fallback(language, selected_question)
