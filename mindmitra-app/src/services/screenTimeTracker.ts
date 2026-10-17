@@ -1,5 +1,6 @@
+import { openUserDatabase, userKey } from './localDatabase';
+import { authenticatedUid } from './identity';
 import { NativeModules, Platform } from 'react-native';
-import * as SQLite from 'expo-sqlite';
 import * as SecureStore from 'expo-secure-store';
 
 export type AppUsageItem = {
@@ -63,7 +64,7 @@ const getNativeModule = (): NativeScreenTimeModule | null => {
 };
 
 const openDb = async () => {
-  const db = await SQLite.openDatabaseAsync(DB_NAME);
+  const db = await openUserDatabase('screen_time.db');
   await db.execAsync(`
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS usage_snapshots (
@@ -82,55 +83,19 @@ const getDayKey = (timestamp: number) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-const toBase64 = (value: string) => {
-  if (typeof globalThis.btoa === 'function') {
-    return globalThis.btoa(value);
-  }
-  return value;
-};
-
-const fromBase64 = (value: string) => {
-  if (typeof globalThis.atob === 'function') {
-    return globalThis.atob(value);
-  }
-  return value;
-};
-
-const xorCipher = (text: string, seed: string) => {
-  if (!seed.length) return text;
-  const chars = [...text].map((ch, i) => String.fromCharCode(ch.charCodeAt(0) ^ seed.charCodeAt(i % seed.length)));
-  return chars.join('');
-};
-
-const getOrCreateEncryptionSeed = async () => {
-  const existing = await SecureStore.getItemAsync(ENCRYPTION_KEY_ALIAS);
-  if (existing) return existing;
-  const seed = `${Date.now()}_${Math.random().toString(36).slice(2, 15)}`;
-  await SecureStore.setItemAsync(ENCRYPTION_KEY_ALIAS, seed);
-  return seed;
-};
-
 const getOrCreateInstallTimestamp = async () => {
-  const existing = await SecureStore.getItemAsync(INSTALL_TIMESTAMP_KEY);
+  const existing = await SecureStore.getItemAsync(userKey(INSTALL_TIMESTAMP_KEY));
   if (existing) {
     const parsed = Number(existing);
     if (!Number.isNaN(parsed) && parsed > 0) return parsed;
   }
   const now = Date.now();
-  await SecureStore.setItemAsync(INSTALL_TIMESTAMP_KEY, String(now));
+  await SecureStore.setItemAsync(userKey(INSTALL_TIMESTAMP_KEY), String(now));
   return now;
 };
 
-const encryptPayload = async (snapshot: UsageSnapshot) => {
-  const seed = await getOrCreateEncryptionSeed();
-  return toBase64(xorCipher(JSON.stringify(snapshot), seed));
-};
-
-const decryptPayload = async (encryptedPayload: string): Promise<UsageSnapshot> => {
-  const seed = await getOrCreateEncryptionSeed();
-  const json = xorCipher(fromBase64(encryptedPayload), seed);
-  return JSON.parse(json) as UsageSnapshot;
-};
+const encryptPayload = async (snapshot: UsageSnapshot) => JSON.stringify(snapshot);
+const decryptPayload = async (payload: string): Promise<UsageSnapshot> => JSON.parse(payload);
 
 const aggregateSnapshot = (apps: AppUsageItem[], endMs: number): UsageSnapshot => {
   const totals = apps.reduce(
@@ -160,24 +125,24 @@ export const ScreenTimeTracker = {
   },
 
   async getConsentStatus() {
-    const value = await SecureStore.getItemAsync(CONSENT_KEY);
+    const value = await SecureStore.getItemAsync(userKey(CONSENT_KEY));
     return value === 'granted';
   },
 
   async setConsentStatus(granted: boolean) {
-    await SecureStore.setItemAsync(CONSENT_KEY, granted ? 'granted' : 'denied');
+    await SecureStore.setItemAsync(userKey(CONSENT_KEY), granted ? 'granted' : 'denied');
     if (!granted) {
-      await SecureStore.setItemAsync(TRACKING_KEY, 'false');
+      await SecureStore.setItemAsync(userKey(TRACKING_KEY), 'false');
     }
   },
 
   async isTrackingEnabled() {
-    const value = await SecureStore.getItemAsync(TRACKING_KEY);
+    const value = await SecureStore.getItemAsync(userKey(TRACKING_KEY));
     return value !== 'false';
   },
 
   async setTrackingEnabled(enabled: boolean) {
-    await SecureStore.setItemAsync(TRACKING_KEY, enabled ? 'true' : 'false');
+    await SecureStore.setItemAsync(userKey(TRACKING_KEY), enabled ? 'true' : 'false');
   },
 
   async hasUsagePermission() {
@@ -195,6 +160,7 @@ export const ScreenTimeTracker = {
   },
 
   async collectAndStoreSnapshot() {
+    const owner = authenticatedUid();
     const hasConsent = await this.getConsentStatus();
     const trackingEnabled = await this.isTrackingEnabled();
     if (!hasConsent || !trackingEnabled) {
@@ -203,7 +169,7 @@ export const ScreenTimeTracker = {
 
     const endMs = Date.now();
     const installTs = await getOrCreateInstallTimestamp();
-    const startMs = installTs;
+    const startMs = new Date(new Date(endMs).setHours(0, 0, 0, 0)).getTime();
     const module = getNativeModule();
     if (Platform.OS === 'android' && !module?.getUsageStats) {
       // Do not create fake data. Real usage stats require the Android native module.
@@ -213,6 +179,7 @@ export const ScreenTimeTracker = {
     if (!apps.length) {
       return null;
     }
+    if (authenticatedUid() !== owner) throw new Error('Account changed.');
     const snapshot = aggregateSnapshot(apps, endMs);
     const encryptedPayload = await encryptPayload(snapshot);
     const db = await openDb();

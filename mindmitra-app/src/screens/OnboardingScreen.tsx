@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Animated, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Animated, KeyboardAvoidingView, Platform, Alert } from 'react-native';
 import { colors } from '../theme/theme';
 import { useAuth } from '../contexts/AuthContext';
 import { ApiService } from '../services/api';
@@ -13,8 +13,6 @@ type QuestionDef = {
 
 const QUESTIONS: QuestionDef[] = [
   { id: 'name', title: 'What should Vani call you?', placeholder: 'Your name' },
-  { id: 'age', title: 'How old are you?', placeholder: 'e.g., 24' },
-  { id: 'gender', title: 'What is your gender?', options: ['Male', 'Female', 'Non-binary', 'Prefer not to say'] },
   { id: 'stress', title: 'How would you describe your stress level lately?', options: ['Very Low', 'Manageable', 'Quite High', 'Overwhelming'] },
   { id: 'sleep', title: 'How many hours of sleep do you usually get?', options: ['Less than 5 hours', '5-6 hours', '7-8 hours', '9+ hours'] },
   { id: 'goals', title: 'What is your primary wellness goal?', options: ['Reduce anxiety', 'Improve sleep', 'Better focus', 'Emotional balance'] },
@@ -64,9 +62,11 @@ export const OnboardingScreen = () => {
   const finishOnboarding = async (finalAnswers: any) => {
     setSaving(true);
     // Send to backend endpoint
-    await ApiService.submitUserProfile(finalAnswers);
-    // Persist local state
-    await completeOnboarding();
+    try {
+      await ApiService.submitUserProfile(finalAnswers);
+      await completeOnboarding();
+    } catch { Alert.alert('Could not save', 'Check your connection and try again.'); }
+    finally { setSaving(false); }
   };
 
   const q = QUESTIONS[step];

@@ -1,3 +1,4 @@
+import { authenticatedUid } from './identity';
 import * as BackgroundFetch from 'expo-background-fetch';
 import * as TaskManager from 'expo-task-manager';
 import { ApiService } from './api';
@@ -8,6 +9,7 @@ const FIFTEEN_MINUTES = 15 * 60;
 
 TaskManager.defineTask(SCREEN_TIME_TASK, async () => {
   try {
+    const owner = authenticatedUid();
     const hasConsent = await ScreenTimeTracker.getConsentStatus();
     const trackingEnabled = await ScreenTimeTracker.isTrackingEnabled();
     if (!hasConsent || !trackingEnabled) {
@@ -20,9 +22,10 @@ TaskManager.defineTask(SCREEN_TIME_TASK, async () => {
       return BackgroundFetch.BackgroundFetchResult.NoData;
     }
 
+    if (authenticatedUid() !== owner) return BackgroundFetch.BackgroundFetchResult.NoData;
     const payload = unsynced.map((item) => item.snapshot);
     const syncResponse = await ApiService.syncScreenTime(payload);
-    if (syncResponse.ok) {
+    if (syncResponse.ok && authenticatedUid() === owner) {
       await ScreenTimeTracker.markSynced(unsynced.map((item) => item.id));
       return BackgroundFetch.BackgroundFetchResult.NewData;
     }

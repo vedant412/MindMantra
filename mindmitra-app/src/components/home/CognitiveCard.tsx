@@ -3,20 +3,20 @@ import { View, Text, StyleSheet, Animated } from 'react-native';
 import { colors, metrics, shadows } from '../../theme/theme';
 
 interface CognitiveCardProps {
-  score: number;
+  score: number | null;
   status: string;
-  vaniScore: number;
-  sleepScore: number;
-  screenScore: number;
-  activityScore: number;
+  vaniScore: number | null;
+  sleepScore: number | null;
+  screenScore: number | null;
+  activityScore: number | null;
 }
 
-const ProgressBar = ({ label, value, color }: { label: string, value: number, color: string }) => {
+const ProgressBar = ({ label, value, color }: { label: string, value: number | null, color: string }) => {
   const animatedWidth = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.timing(animatedWidth, {
-      toValue: value,
+      toValue: value ?? 0,
       duration: 1000,
       useNativeDriver: false,
     }).start();
@@ -26,7 +26,7 @@ const ProgressBar = ({ label, value, color }: { label: string, value: number, co
     <View style={styles.barContainer}>
       <View style={styles.barLabelRow}>
         <Text style={styles.barLabel}>{label}</Text>
-        <Text style={styles.barValue}>{value}/100</Text>
+        <Text style={styles.barValue}>{value == null ? 'Not recorded' : `${value}/100`}</Text>
       </View>
       <View style={styles.barTrack}>
         <Animated.View 
@@ -48,7 +48,7 @@ export const CognitiveCard = ({ score, status, vaniScore, sleepScore, screenScor
           <Text style={styles.title}>Cognitive Score</Text>
           <Text style={styles.status}>{status}</Text>
         </View>
-        <Text style={styles.scoreText}>{score} <Text style={styles.scoreMax}>/ 100</Text></Text>
+        <Text style={styles.scoreText}>{score ?? '—'} <Text style={styles.scoreMax}>/ 100</Text></Text>
       </View>
       
       <View style={styles.barsWrapper}>

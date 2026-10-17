@@ -16,6 +16,7 @@ import { ActivitiesScreen } from '../screens/ActivitiesScreen';
 import { TalkScreen } from '../screens/TalkScreen';
 import { InsightsScreen } from '../screens/InsightsScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
+import { TrackingBootstrap } from '../components/TrackingBootstrap';
 
 const Tab = createBottomTabNavigator();
 
@@ -32,16 +33,12 @@ const TalkButton = ({ children, onPress }: any) => (
   </TouchableOpacity>
 );
 
-export const AppNavigator = () => {
-  return (
-    <AuthProvider>
-      <ActivityProvider>
-        <CognitiveScoreProvider>
-          <MainApp />
-        </CognitiveScoreProvider>
-      </ActivityProvider>
-    </AuthProvider>
-  );
+export const AppNavigator = () => <AuthProvider><AuthenticatedRoot /></AuthProvider>;
+const AuthenticatedRoot = () => {
+  const { user, loading } = useAuth();
+  if (loading) return <ActivityIndicator />;
+  if (!user) return <LoginScreen />;
+  return <ActivityProvider key={user.uid}><CognitiveScoreProvider><MainApp /></CognitiveScoreProvider></ActivityProvider>;
 };
 
 const MainApp = () => {
@@ -59,6 +56,8 @@ const MainApp = () => {
   if (user && !hasCompletedOnboarding) return <OnboardingScreen />;
 
   return (
+    <>
+    <TrackingBootstrap />
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
@@ -117,6 +116,7 @@ const MainApp = () => {
         options={{ tabBarIcon: ({ color }: { color: string }) => <Ionicons name="person" size={26} color={color} /> }}
       />
     </Tab.Navigator>
+    </>
   );
 };
 

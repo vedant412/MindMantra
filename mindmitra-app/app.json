@@ -15,18 +15,14 @@
       "supportsTablet": true
     },
     "android": {
-      "usesCleartextTraffic": true,
+      "usesCleartextTraffic": false,
       "permissions": [
         "android.permission.PACKAGE_USAGE_STATS",
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_BACKGROUND_LOCATION",
-        "android.permission.PACKAGE_USAGE_STATS",
-        "android.permission.RECEIVE_BOOT_COMPLETED",
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_BACKGROUND_LOCATION"
+        "android.permission.RECORD_AUDIO"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -44,8 +40,25 @@
       "expo-asset",
       "expo-font",
       "expo-location",
-      "expo-sqlite",
-      "expo-secure-store"
+      [
+        "expo-sqlite",
+        {
+          "useSQLCipher": true
+        }
+      ],
+      "expo-secure-store",
+      [
+        "react-native-audio-api",
+        {
+          "iosMicrophonePermission": "Allow MindMitra to stream your voice to Vani. Audio is not saved.",
+          "androidPermissions": [
+            "android.permission.RECORD_AUDIO",
+            "android.permission.MODIFY_AUDIO_SETTINGS"
+          ],
+          "iosBackgroundMode": false,
+          "androidForegroundService": false
+        }
+      ]
     ]
   }
 }

@@ -1,5 +1,6 @@
+import { openUserDatabase, userKey } from './localDatabase';
+import { authenticatedUid } from './identity';
 import { Platform } from 'react-native';
-import * as SQLite from 'expo-sqlite';
 import * as SecureStore from 'expo-secure-store';
 import * as Location from 'expo-location';
 
@@ -44,7 +45,7 @@ const STAY_THRESHOLD_MS = 10 * 60 * 1000;
 const CLUSTER_RADIUS_METERS = 150;
 
 const openLocationDb = async () => {
-  const db = await SQLite.openDatabaseAsync(LOCATION_DB_NAME);
+  const db = await openUserDatabase('location_history.db');
   await db.execAsync(`
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS location_points (
@@ -68,48 +69,14 @@ const openLocationDb = async () => {
   return db;
 };
 
-const encode = (value: string) => {
-  if (typeof globalThis.btoa === 'function') return globalThis.btoa(value);
-  return value;
-};
-
-const decode = (value: string) => {
-  if (typeof globalThis.atob === 'function') return globalThis.atob(value);
-  return value;
-};
-
-const xorText = (text: string, seed: string) => {
-  if (!seed) return text;
-  return [...text].map((ch, i) => String.fromCharCode(ch.charCodeAt(0) ^ seed.charCodeAt(i % seed.length))).join('');
-};
-
-const getOrCreateSeed = async () => {
-  const existing = await SecureStore.getItemAsync(LOCATION_ENCRYPTION_KEY);
-  if (existing) return existing;
-  const seed = `${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
-  await SecureStore.setItemAsync(LOCATION_ENCRYPTION_KEY, seed);
-  return seed;
-};
-
+const encryptPoint = async (point: RawLocationPoint) => JSON.stringify(point);
+const decryptPoint = async (payload: string): Promise<RawLocationPoint> => JSON.parse(payload);
 const getOrCreateInstallTimestamp = async () => {
-  const existing = await SecureStore.getItemAsync(LOCATION_INSTALL_TIMESTAMP_KEY);
-  if (existing) {
-    const parsed = Number(existing);
-    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
-  }
-  const now = Date.now();
-  await SecureStore.setItemAsync(LOCATION_INSTALL_TIMESTAMP_KEY, String(now));
-  return now;
-};
-
-const encryptPoint = async (point: RawLocationPoint) => {
-  const seed = await getOrCreateSeed();
-  return encode(xorText(JSON.stringify(point), seed));
-};
-
-const decryptPoint = async (payload: string): Promise<RawLocationPoint> => {
-  const seed = await getOrCreateSeed();
-  return JSON.parse(xorText(decode(payload), seed)) as RawLocationPoint;
+  const existing = await SecureStore.getItemAsync(userKey(LOCATION_INSTALL_TIMESTAMP_KEY));
+  if (existing) return Number(existing);
+  const ts = Date.now();
+  await SecureStore.setItemAsync(userKey(LOCATION_INSTALL_TIMESTAMP_KEY), String(ts));
+  return ts;
 };
 
 const toRadians = (deg: number) => (deg * Math.PI) / 180;
@@ -162,20 +129,20 @@ export const LOCATION_BACKGROUND_TASK = LOCATION_TASK_NAME;
 
 export const LocationTracker = {
   async getConsentStatus() {
-    return (await SecureStore.getItemAsync(LOCATION_CONSENT_KEY)) === 'granted';
+    return (await SecureStore.getItemAsync(userKey(LOCATION_CONSENT_KEY))) === 'granted';
   },
 
   async setConsentStatus(granted: boolean) {
-    await SecureStore.setItemAsync(LOCATION_CONSENT_KEY, granted ? 'granted' : 'denied');
-    if (!granted) await SecureStore.setItemAsync(LOCATION_ENABLED_KEY, 'false');
+    await SecureStore.setItemAsync(userKey(LOCATION_CONSENT_KEY), granted ? 'granted' : 'denied');
+    if (!granted) await SecureStore.setItemAsync(userKey(LOCATION_ENABLED_KEY), 'false');
   },
 
   async isTrackingEnabled() {
-    return (await SecureStore.getItemAsync(LOCATION_ENABLED_KEY)) !== 'false';
+    return (await SecureStore.getItemAsync(userKey(LOCATION_ENABLED_KEY))) !== 'false';
   },
 
   async setTrackingEnabled(enabled: boolean) {
-    await SecureStore.setItemAsync(LOCATION_ENABLED_KEY, enabled ? 'true' : 'false');
+    await SecureStore.setItemAsync(userKey(LOCATION_ENABLED_KEY), enabled ? 'true' : 'false');
   },
 
   async requestLocationPermissions() {
@@ -192,6 +159,7 @@ export const LocationTracker = {
   },
 
   async collectCurrentLocation() {
+    const owner = authenticatedUid();
     const enabled = await this.isTrackingEnabled();
     const consent = await this.getConsentStatus();
     if (!enabled || !consent) return null;
@@ -207,6 +175,7 @@ export const LocationTracker = {
       timestamp: current.timestamp || Date.now()
     };
 
+    if (authenticatedUid() !== owner) throw new Error('Account changed.');
     const payload = await encryptPoint(point);
     const db = await openLocationDb();
     await db.runAsync('INSERT INTO location_points (timestamp, encrypted_payload, synced) VALUES (?, ?, 0)', [
@@ -284,6 +253,7 @@ export const LocationTracker = {
   },
 
   async detectVisitedPlaces() {
+    const owner = authenticatedUid();
     const points = await this.getRecentPoints(24);
     if (points.length < 2) return [];
 
@@ -320,6 +290,7 @@ export const LocationTracker = {
       });
     }
 
+    if (authenticatedUid() !== owner) throw new Error('Account changed.');
     const db = await openLocationDb();
     for (const visit of visits) {
       await db.runAsync(
@@ -393,15 +364,6 @@ export const LocationTracker = {
       time: toTimeLabel(r.entry_time),
       place: r.place_name
     }));
-
-    // If no real data is loaded, gracefully inject mock data as requested
-    if (timeline.length === 0) {
-      timeline = [
-        { time: '09:00 AM', place: 'Home' },
-        { time: '10:30 AM', place: 'Rajarambapu College of Engineering', distance: '1.2 km walked' },
-        { time: '05:15 PM', place: 'Central Park', distance: '2.4 km walked' }
-      ];
-    }
 
     const freqMap = new Map<string, { placeName: string; category: string; visits: number }>();
     rows.forEach((r) => {

@@ -21,9 +21,7 @@ export const LoginScreen = () => {
     }
 
     if (isMockMode || !auth) {
-      // If Firebase isn't configured, use mock login with email as identifier
-      const mockUid = 'mock_' + email.replace(/[^a-zA-Z0-9]/g, '_');
-      await mockLogin(mockUid);
+      setError('Firebase is not configured. Add the public Firebase client configuration to sign in.');
       return;
     }
 
@@ -103,7 +101,7 @@ export const LoginScreen = () => {
 
         {isMockMode && (
           <View style={styles.mockContainer}>
-            <Text style={styles.mockText}>Firebase keys not configured. You can still sign in — it will use Mock Mode.</Text>
+            <Text style={styles.mockText}>Firebase is not configured. Sign-in requires a configured Firebase project.</Text>
           </View>
         )}
       </View>

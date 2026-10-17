@@ -3,10 +3,11 @@ import { View, Text, TouchableOpacity, StyleSheet, Animated, Vibration, Dimensio
 import { Ionicons } from '@expo/vector-icons';
 import { colors, shadows, metrics } from '../theme/theme';
 
+export type GameResult = { started_at: string; ended_at: string; round_results: { correct: boolean; reaction_time_ms?: number }[] };
 export type GameEngineProps = {
   gameId: string;
   gameTitle: string;
-  onComplete: (points: number, feedback: string) => void;
+  onComplete: (points: number, feedback: string, result: GameResult) => void;
   onCancel: () => void;
 };
 
@@ -21,6 +22,10 @@ export const GameEngine: React.FC<GameEngineProps> = ({ gameId, gameTitle, onCom
   const [score, setScore] = useState(0);
   const [round, setRound] = useState(1);
   const [feedback, setFeedback] = useState('');
+  const roundResults = useRef<GameResult['round_results']>([]);
+  const startedAt = useRef('');
+  const endedAt = useRef('');
+  const roundLocked = useRef(false);
 
   // --- REACTION (g2) ---
   const [reactionColor, setReactionColor] = useState('#EAEAEA');
@@ -49,6 +54,8 @@ export const GameEngine: React.FC<GameEngineProps> = ({ gameId, gameTitle, onCom
   };
 
   const startGame = () => {
+    startedAt.current = new Date().toISOString();
+    roundResults.current = [];
     setGameState('playing');
     setScore(0);
     setRound(1);
@@ -56,6 +63,7 @@ export const GameEngine: React.FC<GameEngineProps> = ({ gameId, gameTitle, onCom
   };
 
   const initRound = (r: number, currentScore: number) => {
+    roundLocked.current = false;
     if (r > 5 && gameId !== 'g2') {
       endGame('Excellent focus! You finished all rounds. 🔥', currentScore);
       return;
@@ -119,6 +127,7 @@ export const GameEngine: React.FC<GameEngineProps> = ({ gameId, gameTitle, onCom
       Vibration.vibrate([0, 100, 100, 100]);
       endGame('You missed the sequence! 🧠 Practice makes perfect.', score);
     } else if (newSeq.length === patternSequence.length) {
+      roundResults.current.push({ correct: true });
       playSound('success');
       const earned = score + 10;
       setScore(earned);
@@ -129,12 +138,15 @@ export const GameEngine: React.FC<GameEngineProps> = ({ gameId, gameTitle, onCom
 
   // --- G2 Logics ---
   const handleReactionTap = () => {
+    if (roundLocked.current) return;
+    roundLocked.current = true;
     if (reactionColor === '#EAEAEA') {
       if (reactionTimerRef.current) clearTimeout(reactionTimerRef.current);
       endGame('Too early! You must wait for GREEN.', score);
       return;
     }
     const ms = Date.now() - reactionStartRef.current;
+    roundResults.current.push({ correct: true, reaction_time_ms: ms });
     playSound('success');
     let pts = 5;
     if (ms < 300) pts = 15; else if (ms < 500) pts = 10;
@@ -149,6 +161,7 @@ export const GameEngine: React.FC<GameEngineProps> = ({ gameId, gameTitle, onCom
   const handleStroopTap = (opt: string) => {
     const correctStr = COLOR_NAMES[STROOP_COLORS.indexOf(stroopColor)];
     if (opt === correctStr) {
+      roundResults.current.push({ correct: true });
       playSound('success');
       const earned = score + 10;
       setScore(earned);
@@ -165,6 +178,7 @@ export const GameEngine: React.FC<GameEngineProps> = ({ gameId, gameTitle, onCom
     if (n === currentNumTarget) {
       playSound('beep');
       if (n === numGrid.length) {
+        roundResults.current.push({ correct: true });
         playSound('success');
         const earned = score + 15;
         setScore(earned);
@@ -180,6 +194,8 @@ export const GameEngine: React.FC<GameEngineProps> = ({ gameId, gameTitle, onCom
   };
 
   const endGame = (msg: string, earnedPoints: number) => {
+    endedAt.current = new Date().toISOString();
+    if (msg.startsWith('You missed') || msg.startsWith('Too early') || msg.startsWith('Wrong')) roundResults.current.push({ correct: false });
     setFeedback(msg);
     setScore(earnedPoints);
     setGameState('result');
@@ -263,7 +279,7 @@ export const GameEngine: React.FC<GameEngineProps> = ({ gameId, gameTitle, onCom
           <Text style={styles.title}>Game Finished!</Text>
           <Text style={styles.desc}>{feedback}</Text>
           <View style={styles.pointPill}><Text style={styles.points}>+{score} Points Earned</Text></View>
-          <TouchableOpacity style={styles.startBtn} onPress={() => onComplete(score, feedback)}>
+          <TouchableOpacity style={styles.startBtn} onPress={() => onComplete(score, feedback, { started_at: startedAt.current, ended_at: endedAt.current, round_results: roundResults.current })}>
             <Text style={styles.startText}>Collect Reward</Text>
           </TouchableOpacity>
           <TouchableOpacity style={{ marginTop: 20 }} onPress={startGame}>

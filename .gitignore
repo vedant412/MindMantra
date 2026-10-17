@@ -1,0 +1,8 @@
+venv/
+.venv/
+__pycache__/
+.pytest_cache/
+.test-postgres/
+*.pyc
+*.env
+!*.env.example

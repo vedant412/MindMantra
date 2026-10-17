@@ -1,3 +1,4 @@
+import { authenticatedUid } from './identity';
 import * as TaskManager from 'expo-task-manager';
 import * as Location from 'expo-location';
 import { ApiService } from './api';
@@ -10,14 +11,16 @@ TaskManager.defineTask(LOCATION_BACKGROUND_TASK, async ({ data, error }) => {
   }
   const locations = (data as { locations?: Location.LocationObject[] } | undefined)?.locations ?? [];
   try {
+    const owner = authenticatedUid();
     await LocationTracker.handleBackgroundBatch(locations);
     await LocationTracker.detectVisitedPlaces();
     const unsynced = await LocationTracker.getUnsyncedPayload();
+    if (authenticatedUid() !== owner) return;
     const response = await ApiService.syncLocationData({
       points: unsynced.points.map((p) => p.point),
       visits: unsynced.visits.map((v) => v.visit)
     });
-    if (response.ok) {
+    if (response.ok && authenticatedUid() === owner) {
       await LocationTracker.markSynced(
         unsynced.points.map((p) => p.id),
         unsynced.visits.map((v) => v.id)

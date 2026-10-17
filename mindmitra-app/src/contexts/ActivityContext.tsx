@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { openUserDatabase } from '../services/localDatabase';
 
 type ActivityState = {
   completedIds: string[];
@@ -31,7 +31,10 @@ export const ActivityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const loadState = async () => {
     try {
-      const stored = await AsyncStorage.getItem('@activity_state');
+      const db = await openUserDatabase('activity.db');
+      await db.execAsync('CREATE TABLE IF NOT EXISTS activity_state (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)');
+      const row = await db.getFirstAsync<{ payload: string }>('SELECT payload FROM activity_state WHERE id = 1');
+      const stored = row?.payload;
       if (stored) {
         const parsed: ActivityState = JSON.parse(stored);
         const today = new Date().toISOString().split('T')[0];
@@ -39,7 +42,7 @@ export const ActivityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           // Reset daily stats
           const resetState = { ...parsed, completedIds: [], dailyPoints: 0, lastResetDate: today };
           setState(resetState);
-          await AsyncStorage.setItem('@activity_state', JSON.stringify(resetState));
+          await db.runAsync('INSERT OR REPLACE INTO activity_state(id,payload) VALUES (1,?)', JSON.stringify(resetState));
         } else {
           setState(parsed);
         }
@@ -50,14 +53,16 @@ export const ActivityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   };
 
   const markCompleted = async (taskId: string, pointsEarned: number) => {
-    const newState = { ...state };
+    const newState = { ...state, completedIds: [...state.completedIds] };
     if (!newState.completedIds.includes(taskId)) {
       newState.completedIds.push(taskId);
     }
     newState.dailyPoints += pointsEarned;
     newState.totalPoints += pointsEarned;
     setState(newState);
-    await AsyncStorage.setItem('@activity_state', JSON.stringify(newState));
+    const db = await openUserDatabase('activity.db');
+    await db.execAsync('CREATE TABLE IF NOT EXISTS activity_state (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)');
+    await db.runAsync('INSERT OR REPLACE INTO activity_state(id,payload) VALUES (1,?)', JSON.stringify(newState));
   };
 
   return (

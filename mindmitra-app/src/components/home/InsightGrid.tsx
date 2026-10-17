@@ -5,9 +5,9 @@ import { colors, metrics, shadows } from '../../theme/theme';
 
 interface InsightGridProps {
   sleepHours: string;
-  sleepScore: number;
+  sleepScore: number | null;
   moodState: string;
-  moodScore: number;
+  moodScore: number | null;
 }
 
 export const InsightGrid = ({ sleepHours, sleepScore, moodState, moodScore }: InsightGridProps) => {
@@ -20,7 +20,7 @@ export const InsightGrid = ({ sleepHours, sleepScore, moodState, moodScore }: In
         <Text style={styles.value}>{sleepHours}</Text>
         <Text style={styles.label}>Sleep</Text>
         <View style={styles.scoreRow}>
-          <Text style={styles.scoreText}>Score: {sleepScore}</Text>
+          <Text style={styles.scoreText}>Score: {sleepScore ?? 'Not recorded'}</Text>
         </View>
       </View>
 
@@ -31,7 +31,7 @@ export const InsightGrid = ({ sleepHours, sleepScore, moodState, moodScore }: In
         <Text style={styles.value}>{moodState}</Text>
         <Text style={styles.label}>Mood</Text>
         <View style={styles.scoreRow}>
-          <Text style={styles.scoreText}>Score: {moodScore}</Text>
+          <Text style={styles.scoreText}>Score: {moodScore ?? 'Not recorded'}</Text>
         </View>
       </View>
     </View>

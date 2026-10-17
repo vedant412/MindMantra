@@ -17,10 +17,11 @@ const MOCK_QUOTES = [
 ];
 
 export const HomeScreen = ({ navigation }: any) => {
+  const [checkinDismissed, setCheckinDismissed] = useState(false);
   const [data, setData] = useState<any>(null);
   const [userName, setUserName] = useState('Friend');
   const [loading, setLoading] = useState(true);
-  const { 
+  const {
     cognitiveScore,
     activityPercent,
     vaniScore,
@@ -33,7 +34,8 @@ export const HomeScreen = ({ navigation }: any) => {
     submitDailyInput
   } = useCognitiveScore();
 
-  const getCognitiveStatus = (score: number) => {
+  const getCognitiveStatus = (score: number | null) => {
+    if (score == null) return 'Not enough measurements';
     if (score >= 80) return "Excellent Health";
     if (score >= 60) return "Good Health";
     if (score >= 40) return "Fair Health";
@@ -42,13 +44,18 @@ export const HomeScreen = ({ navigation }: any) => {
   };
 
   const getDynamicRecommendations = () => {
-    if (cognitiveScore < 40) {
+    if (cognitiveScore == null) return [
+      { id: '1', text: 'Record your daily check-in', icon: 'moon-outline' as any, action: () => setCheckinDismissed(false) },
+      { id: '2', text: 'Try a memory game', icon: 'game-controller-outline' as any, action: () => navigation.navigate('Activities') },
+      { id: '3', text: 'Talk with Vani', icon: 'chatbubble-outline' as any, action: () => navigation.navigate('Talk') },
+    ];
+    if (cognitiveScore != null && cognitiveScore < 40) {
       return [
         { id: '1', text: "Do a breathing exercise", icon: "leaf-outline" as any, action: () => navigation.navigate("Activities", { screen: "Exercise" }) },
         { id: '2', text: "Try a memory game", icon: "game-controller-outline" as any, action: () => navigation.navigate("Activities", { screen: "Games" }) },
         { id: '3', text: "Reduce screen time", icon: "moon-outline" as any, action: () => navigation.navigate("Insights") }
       ];
-    } else if (cognitiveScore < 70) {
+    } else if (cognitiveScore != null && cognitiveScore < 70) {
       return [
         { id: '1', text: "Play focus game", icon: "game-controller-outline" as any, action: () => navigation.navigate("Activities", { screen: "Games" }) },
         { id: '2', text: "Complete 1 exercise", icon: "leaf-outline" as any, action: () => navigation.navigate("Activities", { screen: "Exercise" }) },
@@ -123,38 +130,38 @@ export const HomeScreen = ({ navigation }: any) => {
           </View>
         ) : (
           <>
-            <CognitiveCard 
-              score={cognitiveScore} 
-              status={getCognitiveStatus(cognitiveScore)} 
-              vaniScore={vaniScore} 
-              sleepScore={sleepPercent} 
-              screenScore={screenPercent} 
-              activityScore={activityPercent} 
+            <CognitiveCard
+              score={cognitiveScore}
+              status={getCognitiveStatus(cognitiveScore)}
+              vaniScore={vaniScore}
+              sleepScore={sleepPercent}
+              screenScore={screenPercent}
+              activityScore={activityPercent}
             />
-            
+
             <QuoteCarousel quotes={MOCK_QUOTES} />
-            
-            <InsightGrid 
-              sleepHours={dailyInputCompleted ? formatSleepString(sleepMinutes) : "Not recorded"} 
-              sleepScore={sleepPercent} 
-              moodState={dailyInputCompleted ? mood : "Pending"} 
-              moodScore={dailyInputCompleted ? moodScore : 0} 
+
+            <InsightGrid
+              sleepHours={dailyInputCompleted ? formatSleepString(sleepMinutes) : "Not recorded"}
+              sleepScore={sleepPercent}
+              moodState={dailyInputCompleted ? mood : "Pending"}
+              moodScore={dailyInputCompleted ? moodScore : null}
             />
-            
-            <RecommendationsList 
-              insightsText={data?.insight || "Your mood has been stable recently. Keep up the good work!"}
+
+            <RecommendationsList
+              insightsText={data?.insight || "Record a check-in or complete an activity to see your measurements."}
               recommendations={getDynamicRecommendations()}
             />
           </>
         )}
-        
+
       </ScrollView>
 
       {!dailyInputCompleted && !loading && (
-        <DailyCheckinModal 
-          visible={true} 
-          onSubmit={(hours, moodString) => submitDailyInput(hours, moodString)} 
-          onClose={() => {}} 
+        <DailyCheckinModal
+          visible={!checkinDismissed}
+          onSubmit={(hours, moodString) => submitDailyInput(hours, moodString)}
+          onClose={() => setCheckinDismissed(true)}
         />
       )}
     </>

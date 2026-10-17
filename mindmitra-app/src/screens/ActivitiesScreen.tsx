@@ -1,3 +1,5 @@
+import { queueActivity, flushActivityOutbox } from '../services/activityOutbox';
+import { eventId } from '../services/api';
 import React, { useState, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Animated, Modal } from 'react-native';
 import { useRoute } from '@react-navigation/native';
@@ -5,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, metrics, shadows } from '../theme/theme';
 import { useActivityParams } from '../contexts/ActivityContext';
 import { useCognitiveScore } from '../contexts/CognitiveScoreContext';
-import { GameEngine } from '../components/GameEngine';
+import { GameEngine, GameResult } from '../components/GameEngine';
 import { ExerciseEngine } from '../components/ExerciseEngine';
 
 type ActivityItem = {
@@ -52,6 +54,10 @@ const TOTAL_ACTIVE_TASKS = ALL_ACTIVITIES.filter(a => a.isActive).length;
 export const ActivitiesScreen = () => {
   const [activeTab, setActiveTab] = useState<'Games' | 'Exercise'>('Games');
   const [activeActivity, setActiveActivity] = useState<ActivityItem | null>(null);
+  const startedAt = useRef(new Date().toISOString());
+  const completionId = useRef(eventId());
+  const savingRef = useRef(false);
+  React.useEffect(() => { void flushActivityOutbox().catch(() => {}); }, []);
   const tabScaleX = useRef(new Animated.Value(1)).current;
 
   // Global Sync Context
@@ -86,20 +92,22 @@ export const ActivitiesScreen = () => {
       Alert.alert('Locked 🔒', 'This activity will be available soon.');
       return;
     }
+    startedAt.current = new Date().toISOString();
+    completionId.current = eventId();
     setActiveActivity(activity);
   };
 
-  const handleTaskCompleted = (points: number, feedback: string) => {
-    if (activeActivity) {
-      markCompleted(activeActivity.id, points);
-      if (activeActivity.category === 'Games') {
-        addCompletedGame();
-      } else {
-        addCompletedExercise();
-      }
-    }
-    Alert.alert('Task Completed! 🎉', feedback);
-    setActiveActivity(null);
+  const handleTaskCompleted = async (points: number, feedback: string, result?: GameResult) => {
+    if (!activeActivity || savingRef.current) return;
+    savingRef.current = true;
+    try {
+      const synced = await queueActivity(activeActivity.category === 'Games' ? 'game' : 'exercise', activeActivity.id, points, result?.started_at ?? startedAt.current, result?.ended_at ?? new Date().toISOString(), completionId.current, result?.round_results);
+      await markCompleted(activeActivity.id, points);
+      if (activeActivity.category === 'Games') addCompletedGame(); else addCompletedExercise();
+      Alert.alert(synced ? 'Task completed' : 'Saved on this device', synced ? feedback : 'Your result will sync when you reconnect.');
+      setActiveActivity(null);
+    } catch { Alert.alert('Could not save result', 'Please try again before closing this activity.'); }
+    finally { savingRef.current = false; }
   };
 
   const handleCancelTask = () => {

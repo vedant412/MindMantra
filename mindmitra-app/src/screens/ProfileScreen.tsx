@@ -1,5 +1,6 @@
+import { deleteLocalAccountData } from '../services/localDatabase';
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Switch, TouchableOpacity, Platform, Alert } from 'react-native';
+import { View, Text, StyleSheet, Switch, TouchableOpacity, Platform, Alert, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, metrics } from '../theme/theme';
 import { ScreenTimeTracker } from '../services/screenTimeTracker';
@@ -10,13 +11,16 @@ import { ApiService } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
 export const ProfileScreen = () => {
+  const [memoryEnabled, setMemoryEnabled] = useState(false);
+  const [transcriptsEnabled, setTranscriptsEnabled] = useState(false);
+  const [retentionDays, setRetentionDays] = useState(90);
   const [trackingEnabled, setTrackingEnabled] = useState(false);
   const [usagePermission, setUsagePermission] = useState(false);
   const [locationEnabled, setLocationEnabled] = useState(false);
   const [locationPermission, setLocationPermission] = useState(false);
   const [userName, setUserName] = useState('My Profile');
   const [userEmail, setUserEmail] = useState('mindmitra_user');
-  const { user } = useAuth(); // Import useAuth from contexts if needed, else we rely on mock
+  const { user, signOut } = useAuth(); // Import useAuth from contexts if needed, else we rely on mock
 
   useEffect(() => {
     const loadState = async () => {
@@ -32,9 +36,12 @@ export const ProfileScreen = () => {
       setUsagePermission(permission);
       setLocationEnabled(locEnabled && locConsent);
       setLocationPermission(locPermission);
+      setMemoryEnabled(profile.memory_enabled);
+      setTranscriptsEnabled(profile.transcript_storage_enabled);
+      setRetentionDays(profile.retention_days);
       if (profile?.Name) setUserName(profile.Name);
     };
-    loadState();
+    loadState().catch(() => Alert.alert('Unavailable', 'Could not load privacy preferences.'));
   }, []);
 
   const onToggleTracking = async (enabled: boolean) => {
@@ -79,7 +86,7 @@ export const ProfileScreen = () => {
   };
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 160 }}>
       <View style={styles.header}>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>{userName.charAt(0).toUpperCase()}</Text>
@@ -131,7 +138,29 @@ export const ProfileScreen = () => {
           </Text>
         </TouchableOpacity>
       </View>
-    </View>
+      <View style={styles.privacyCard}>
+        <Text style={styles.privacyTitle}>Conversation privacy</Text>
+        <Text style={styles.helperText}>Audio is never saved. Transcripts and memory expire after {retentionDays} days.</Text>
+        <View style={styles.row}><Text>Save transcripts</Text><Switch value={transcriptsEnabled} onValueChange={async enabled => {
+          try { await ApiService.updatePreferences({ transcript_storage_enabled: enabled, memory_enabled: enabled && memoryEnabled }); setTranscriptsEnabled(enabled); if (!enabled) setMemoryEnabled(false); }
+          catch { Alert.alert('Not saved', 'Please try again.'); }
+        }} /></View>
+        <View style={styles.row}><Text>Remember conversations</Text><Switch value={memoryEnabled} disabled={!transcriptsEnabled} onValueChange={async enabled => {
+          try { await ApiService.updatePreferences({ memory_enabled: enabled }); setMemoryEnabled(enabled); }
+          catch { Alert.alert('Not saved', 'Please try again.'); }
+        }} /></View>
+        <View style={styles.row}>{[30, 90, 365].map(days => <TouchableOpacity key={days} style={styles.permissionBtn} onPress={async () => {
+          try { await ApiService.updatePreferences({ retention_days: days }); setRetentionDays(days); } catch { Alert.alert('Not saved', 'Please try again.'); }
+        }}><Text>{days} days</Text></TouchableOpacity>)}</View>
+        <TouchableOpacity style={styles.permissionBtn} onPress={() => Alert.alert('Forget memory?', 'Saved facts and semantic memory will be deleted.', [
+          { text: 'Cancel', style: 'cancel' }, { text: 'Forget', style: 'destructive', onPress: () => { void ApiService.forgetMemory().then(() => setMemoryEnabled(false)).catch(() => Alert.alert('Could not delete', 'Please try again.')); } }
+        ])}><Text>Forget conversation memory</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.permissionBtn} onPress={() => Alert.alert('Delete all app data?', 'Your server data will be deleted and this account will no longer be able to create app data. Existing backups expire according to the service policy.', [
+          { text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => { void ApiService.deleteAccountData().then(async () => { await BackgroundSyncService.unregister(); await LocationBackgroundService.stop(); await deleteLocalAccountData(); await signOut(); }).catch(() => Alert.alert('Could not delete', 'Please try again.')); } }
+        ])}><Text style={{ color: '#B42318' }}>Delete all app data</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.permissionBtn} onPress={() => void signOut()}><Text>Sign out</Text></TouchableOpacity>
+      </View>
+    </ScrollView>
   );
 };
 
