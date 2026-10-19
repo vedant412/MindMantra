@@ -7,7 +7,11 @@ class Settings(BaseSettings):
     app_env: str = "development"
     database_url: str = "postgresql+psycopg://localhost/mindmitra"
     database_migration_url: str | None = None
-    firebase_project_id: str = ""
+    neon_auth_base_url: str = ""
+    neon_auth_jwks_url: str = ""
+    neon_auth_issuer: str = ""
+    neon_auth_audience: str = ""
+    neon_auth_handoff_key: str = ""
     gemini_api_key: str = ""
     gemini_live_model: str = "gemini-3.8-live"
     gemini_text_model: str = "gemini-2.5-flash"
@@ -28,6 +32,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_settings(self):
+        # Neon copies standard PostgreSQL URLs; explicitly select our installed driver.
+        for field in ("database_url", "database_migration_url"):
+            value = getattr(self, field)
+            if value and value.startswith(("postgresql://", "postgres://")):
+                setattr(self, field, "postgresql+psycopg://" + value.split("://", 1)[1])
         if not self.database_url.startswith("postgresql+psycopg://"):
             raise ValueError("Fresh PostgreSQL required; SQLite is never opened")
         if self.embedding_dimensions != 768:

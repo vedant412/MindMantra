@@ -2,6 +2,7 @@ import { AppState } from 'react-native';
 import { toByteArray } from 'base64-js';
 import { ApiService, API_BASE_URL } from './api';
 import { authenticatedUid } from './identity';
+import { LookupFeedback } from './lookupFeedback';
 
 type Callbacks = { onState: (state: string) => void; onTranscript: (role: string, text: string) => void; onError: (message: string) => void };
 
@@ -13,10 +14,14 @@ export class LiveVoice {
   private sources = new Set<import('react-native-audio-api').AudioBufferSourceNode>();
   private nextStart = 0;
   private stopped = false;
+  private ready = false;
   private owner = authenticatedUid();
   private subscriptions: { remove: () => void }[] = [];
   private native: typeof import('react-native-audio-api') | null = null;
-  constructor(private callbacks: Callbacks) {}
+  private feedback: LookupFeedback;
+  constructor(private callbacks: Callbacks) {
+    this.feedback = new LookupFeedback(state => callbacks.onState(!this.ready && state === 'listening' ? 'connecting' : state), audio => this.play(audio));
+  }
 
   async start(language: string) {
     try {
@@ -24,6 +29,7 @@ export class LiveVoice {
       this.subscriptions.push(AppState.addEventListener('change', state => { if (state !== 'active') void this.stop(); }));
       this.native = require('react-native-audio-api');
       const { AudioManager, AudioRecorder, AudioContext } = this.native!;
+      if (typeof AudioRecorder !== 'function' || typeof AudioContext !== 'function') throw new Error('Live voice requires a native development build. Use the browser preview for web microphone streaming.');
       const permission = await AudioManager.requestRecordingPermissions();
       if (permission !== 'Granted') throw new Error('Microphone permission is required.');
       if (this.stopped) return;
@@ -56,15 +62,17 @@ export class LiveVoice {
             });
             const result = await this.recorder!.start();
             if (result.status === 'error') throw new Error(result.message);
-            this.callbacks.onState('listening');
-          } else if (message.type === 'audio') {
-            this.play(message.data);
-            this.callbacks.onState('speaking');
+            this.ready = true;
+            this.feedback.turnComplete();
+          } else if (message.type === 'lookup_status') this.feedback.status(message);
+          else if (message.type === 'audio') {
+            this.feedback.receiveAudio(message.data);
           } else if (message.type === 'interrupted') {
+            this.feedback.interrupt();
             this.clearPlayback();
             this.callbacks.onState('listening');
           } else if (message.type === 'transcript') this.callbacks.onTranscript(message.role, message.text);
-          else if (message.type === 'turn_complete') this.callbacks.onState('listening');
+          else if (message.type === 'turn_complete') this.feedback.turnComplete();
           else if (message.type === 'error') await this.fail(message.message);
         } catch { await this.fail('Voice interrupted. Please reconnect.'); }
       };
@@ -108,6 +116,7 @@ export class LiveVoice {
   async stop() {
     if (this.stopped) return;
     this.stopped = true;
+    this.feedback.stop();
     this.subscriptions.forEach(subscription => subscription.remove());
     if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify({ type: 'stop' }));
     this.socket?.close();

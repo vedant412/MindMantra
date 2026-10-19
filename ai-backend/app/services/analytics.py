@@ -11,7 +11,8 @@ def day_bounds(day: date, tz: str):
     return start.astimezone(timezone.utc), (start + timedelta(days=1)).astimezone(timezone.utc)
 
 def component_scores(games, exercises, checkin, sleep_minutes, screen_ms, vani_score=None):
-    # Nine activities are currently available. Missing inputs stay unknown.
+    # Nine completed sessions is the unchanged wellness-v1 engagement cap.
+    # Catalog expansion does not change historical scoring. Missing inputs stay unknown.
     activity = min(100, round(min((games + exercises) / 9, 1) * 80 + (20 if checkin else 0)))
     sleep = None
     if sleep_minutes is not None:

@@ -1,13 +1,14 @@
-import { Platform } from 'react-native';
+import { API_BASE_URL } from '../config/publicConfig';
+export { API_BASE_URL } from '../config/publicConfig';
 import { bearerToken, authenticatedUid } from './identity';
 import type { UsageSnapshot } from './screenTimeTracker';
 import type { RawLocationPoint, VisitedPlace } from './locationTracker';
 
-const configured = process.env.EXPO_PUBLIC_API_BASE_URL?.trim().replace(/['"]/g, '').replace(/\/$/, '');
-export const API_BASE_URL = configured || (__DEV__ ? (Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://localhost:8000') : '');
-if (!__DEV__ && !API_BASE_URL.startsWith('https://')) throw new Error('Configure an HTTPS backend URL.');
 export const eventId = () => `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 let activeConversation: { owner: string; id: string } | null = null;
+export class ApiError extends Error {
+  constructor(public status: number, message: string) { super(message); this.name = 'ApiError'; }
+}
 
 export async function request(path: string, init: RequestInit = {}) {
   const owner = authenticatedUid();
@@ -23,11 +24,20 @@ export async function request(path: string, init: RequestInit = {}) {
       headers: { 'Content-Type': 'application/json', ...init.headers, Authorization: `Bearer ${token}` } });
     if (authenticatedUid() !== owner) throw new Error('Account changed during request.');
     if (!response.ok) {
-      if (response.status === 401) throw new Error('Please sign in again.');
-      if (response.status === 503) throw new Error('This service is not configured or temporarily unavailable.');
-      throw new Error(`Request failed (${response.status}).`);
+      if (response.status === 401) throw new ApiError(401, 'Please sign in again.');
+      if (response.status === 503) throw new ApiError(503, 'This service is not configured or temporarily unavailable.');
+      throw new ApiError(response.status, `Request failed (${response.status}).`);
     }
     return await response.json();
+  } catch (error) {
+    if (controller.signal.aborted) {
+      if (init.signal?.aborted) throw error;
+      throw new Error('The server took too long to respond. Please try again.');
+    }
+    if (error instanceof TypeError) {
+      throw new Error('Cannot connect to the server. Please check that it is available and try again.');
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
     init.signal?.removeEventListener('abort', cancel);
@@ -48,6 +58,7 @@ export const ApiService = {
     return { ...data, score: data.composite_score };
   },
   getInsights: (options?: RequestInit) => request('/insights', options),
+  getActivityProgress: () => request('/activities/progress'),
   getLocationInsights: (options?: RequestInit) => request('/location/insights', options),
   syncScreenTime: async (snapshots: UsageSnapshot[]) => {
     for (let i = 0; i < snapshots.length; i += 100) await post('/screen-time/sync', { snapshots: snapshots.slice(i, i + 100) });

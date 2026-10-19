@@ -8,14 +8,15 @@ SQLite databases and audio files are left untouched; no data import is required.
 
 - Python 3.12 and Node.js/npm.
 - A new Neon PostgreSQL database.
-- A Firebase project with **Authentication → Email/Password** enabled.
-- Firebase client configuration and backend Admin credentials from that same project.
+- Neon Auth enabled on the same Neon branch, with email/password sign-in.
+- Google and/or GitHub OAuth configured in the Neon Auth console (step 4).
 - A server-side Gemini API key for typed chat and Live voice.
 - An Android development toolchain and device/emulator. Building iOS requires
   macOS and Xcode.
 
-Streaming audio and encrypted local activity storage require a native development
-build. Expo Go cannot test the complete app.
+Native streaming audio and encrypted local activity storage require a native
+development build. Browser voice uses Web Audio on HTTPS or localhost, with
+microphone permission. Expo Go cannot test the complete app.
 
 ## 1. Install and configure the backend
 
@@ -32,24 +33,32 @@ Edit `ai-backend/.env` privately:
 | --- | --- |
 | `DATABASE_MIGRATION_URL` | The new database's **direct owner** connection URL |
 | `DATABASE_URL` | Its **pooled `app_runtime`** connection URL; configure this role in step 2 |
-| `FIREBASE_PROJECT_ID` | Your Firebase project ID |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Absolute path to your Firebase Admin JSON file, outside the repository |
+| `NEON_AUTH_BASE_URL` | The Auth URL copied from the Neon branch console |
+| `NEON_AUTH_HANDOFF_KEY` | Server-only Fernet key for native sign-in; generate below |
 | `GEMINI_API_KEY` | Your server-side Gemini key |
 | `LIVE_ENABLED` | Leave `false` initially |
 | `RAG_ENABLED` | Leave `false` initially |
 
-Both database URLs must start with `postgresql+psycopg://` and include
+Both database URLs may use Neon's `postgresql://` format or
+`postgresql+psycopg://` (the backend selects psycopg), and must include
 `sslmode=require` or a stricter TLS mode. Use Neon's connection details for the
 selected database and role; URL-encode special characters in passwords.
 
-Windows credential paths can use forward slashes:
+Generate the native handoff key directly into the backend `.env` without
+printing it (run once, from `ai-backend`):
 
-```dotenv
-GOOGLE_APPLICATION_CREDENTIALS=C:/Users/YOUR_NAME/secrets/firebase-admin.json
+```powershell
+.\.venv\Scripts\python.exe -c "from pathlib import Path; from cryptography.fernet import Fernet; p=Path('.env'); s=p.read_text(); assert not any(x.startswith('NEON_AUTH_HANDOFF_KEY=') and x.split('=',1)[1].strip() for x in s.splitlines()), 'Key already configured'; s='\n'.join(x for x in s.splitlines() if not x.startswith('NEON_AUTH_HANDOFF_KEY=')); p.write_text(s+'\nNEON_AUTH_HANDOFF_KEY='+Fernet.generate_key().decode()+'\n')"
 ```
 
-Do not commit `.env` or the Admin JSON. Database URLs, Gemini keys and embedding
-keys must never appear in mobile configuration or `EXPO_PUBLIC_` variables.
+Do not share or commit the generated key.
+Database URLs, handoff keys, Gemini keys and embedding keys must never appear
+in mobile configuration or `EXPO_PUBLIC_` variables.
+
+`NEON_AUTH_BASE_URL`, JWKS URL, issuer and audience are public identifiers.
+Leave their optional overrides blank unless your Neon JWT configuration differs.
+The defaults use the Auth URL's origin for issuer/audience and append
+`/.well-known/jwks.json` to the full Auth URL.
 
 ## 2. Create the PostgreSQL schema and runtime role
 
@@ -92,7 +101,7 @@ Invoke-RestMethod http://localhost:8000/health
 ```
 
 Expect `ok: true`. Open [API documentation](http://localhost:8000/docs) to inspect
-the routes. Personal API calls require a Firebase ID token; an unauthenticated
+the routes. Personal API calls require a signed Neon Auth JWT; an unauthenticated
 `401` is expected.
 
 For mobile, provide a reachable **HTTPS URL** forwarding to this backend with
@@ -114,8 +123,11 @@ Edit `mindmitra-app/.env`:
 
 - Set `EXPO_PUBLIC_API_BASE_URL` to your reachable HTTPS backend URL, without
   `/docs` or `/live/ws` appended.
-- Fill the `EXPO_PUBLIC_FIREBASE_*` client values from the same Firebase project
-  used by the backend. These are separate from the private Firebase Admin JSON.
+- Set `EXPO_PUBLIC_NEON_AUTH_URL` to the same Auth URL as backend `NEON_AUTH_BASE_URL`.
+- Set `EXPO_PUBLIC_AUTH_WEB_URL` to the hosted HTTPS copy of this Expo web app.
+  Native sign-in opens it in the system browser. For browser-only local preview,
+  use `http://localhost:8081` and add that origin to both Neon trusted origins and
+  backend `CORS_ALLOWED_ORIGINS`. Native devices need a reachable HTTPS website.
 
 Then run:
 
@@ -128,17 +140,63 @@ On macOS, use `npm run ios` instead. Rebuild after native dependency/plugin chan
 Restart Metro after public environment changes. For an existing development build,
 you can start Metro separately with `npx expo start --dev-client`.
 
-Create an account or sign in and complete onboarding. Firebase must be configured;
-there is no mock-login path to personal backend data.
+For browser preview, run `npx expo start --web --localhost --port 8081`.
+Browser sign-in, typed chat and streaming voice can be tested here. Allow the
+microphone and keep the tab visible during voice sessions. Browser capture uses
+an AudioWorklet, resamples to 16 kHz PCM16, and plays responses at 24 kHz. No audio
+recordings are saved. SQLCipher activity queues require a native development build.
+
+In **Neon Console → Auth**, enable email/password and configure Google/GitHub
+providers. Put OAuth client IDs/secrets in Neon only. In each provider's console,
+register the redirect URI `<NEON_AUTH_BASE_URL>/callback/google` or
+`<NEON_AUTH_BASE_URL>/callback/github`. Register your hosted app's origin (and
+`http://localhost:8081` for development) as a Neon Auth trusted origin. The
+provider redirect URI is different from the app callback URL. The SDK supplies
+the current app URL as `callbackURL`, preserving native handoff parameters.
+See [Neon's OAuth setup](https://neon.com/docs/auth/guides/setup-oauth).
+
+Deploy this web app at `EXPO_PUBLIC_AUTH_WEB_URL` for native sign-in. Build the
+native app again to register `mindmitra://auth/callback`. Expo Go cannot receive
+this app-specific callback reliably. The hosted page requires explicit approval
+to continue as the displayed account. The native app verifies a random state and
+redeems a single-use, 60-second PKCE-bound code. JWTs and provider credentials
+never enter redirect URLs. Use HTTPS and redact query strings in access logs.
+Neon cookies remain in the browser; native JWTs are saved only in SecureStore.
+
+Native API access lasts until the issued Neon JWT expires (normally 15 minutes).
+On expiry, the app returns to sign-in; reopening the browser reuses the Neon
+session when available. No refresh token is copied into the app. Native sign-out
+clears that device's token; the hosted browser session may remain. Browser
+sign-out revokes its managed session, but already issued JWTs remain valid until
+expiry. Application data deletion disables the app account immediately.
+
+Create an account or sign in and complete onboarding. No mock authentication is
+available. Existing Firebase logins must create/use a Neon account; the migration
+preserves prior application rows as isolated legacy identities and does not link
+accounts by email. Run `alembic upgrade head` (revision `0002`) and reapply the
+runtime grants even if revision `0001` was already deployed.
 
 ## 5. Enable streaming voice
 
 In the backend `.env`, set `LIVE_ENABLED=true` after verifying your project can use
 the configured `GEMINI_LIVE_MODEL`. Restart the backend.
 
-Open **Talk**, choose English, Hindi or Marathi, tap **Start voice** and grant
+Open **Talk**, choose English, Hindi or Marathi, tap **Start conversation** and grant
 microphone permission. Typed chat is available when Live is disabled or unavailable.
-Audio streams without being recorded to files.
+Tap Start conversation once: Vani greets you and keeps listening between replies.
+Speak naturally and interrupt when needed; use End conversation to release the
+microphone. SQL/memory lookups show a small Getting information status, like
+Connecting. There are no spoken lookup announcements, and answer audio is not
+held for a progress notice. After understanding a concern, Vani's prompt asks it
+to recommend 2-3 relevant available activities, with a brief reason or first step.
+Normal turn completion leaves the conversation and pending lookups
+open. The configured session limit still applies (15 minutes by default).
+
+Audio streams without being recorded to files. In the browser, use HTTPS or
+localhost, allow microphone access, and keep the tab visible. Voice stops when
+you hide/leave the tab or change accounts. If an embedded preview blocks microphone
+access, open the same app URL directly in Chrome or Edge. The browser needs
+AudioWorklet support; production CSP must permit the locally created worklet module.
 
 ## 6. Enable semantic memory
 
@@ -174,6 +232,34 @@ Keep embeddings at 768 dimensions. A provider/model change requires a new profil
 and evaluation; a dimension change also requires a schema migration. Evaluate
 retrieval in English, Hindi and Marathi before enabling it for real users.
 
+## Activities
+
+All 19 activities are available: nine games (Pattern Recall, Tap Reaction Test,
+Stroop Test, Number Sequence, Number Memory, Card Match, Speed Sorting, Find the Target,
+Logic Quiz) and ten exercises. Open a card for instructions, complete the session,
+then save its result. A failed browser save keeps the result on screen for retry
+with the same event ID; stay on that screen until it saves. Native development
+builds retain unsent results in the encrypted per-account queue and retry when
+Activities is opened again. Pending results do not add to server progress yet.
+
+Timed exercises offer shorter sessions and pause when the app goes into the
+background. Focus Timer awards 15 points for 25 active minutes or 5 points for a
+shorter completed session; other exercises award 5. Reflection and recall text
+never enters the API payload or semantic memory. Only completion and active
+duration are saved. Game scores and improvement remain SQL calculations, grouped
+by game version; the rewritten games use version 2 and do not merge with older
+version 1 results. No schema migration is needed for the expanded catalog.
+
+The wellness-v1 activity component keeps its existing cap of nine completed
+sessions per day; catalog size does not change that formula. The Activities
+progress bar separately counts distinct activities tried that day, using the
+profile timezone. These are practice activities, not clinical tests.
+
+Gentle session guidance follows general advice from
+[NHS breathing exercises](https://www.nhs.uk/mental-health/self-help/guides-tools-and-activities/breathing-exercises-for-stress/),
+[NHS seated exercise](https://www.nhs.uk/live-well/exercise/sitting-exercises/)
+and [AAO screen breaks](https://www.aao.org/eye-health/tips-prevention/computer-usage).
+
 ## Verification
 
 | Check | Expected result |
@@ -198,6 +284,9 @@ Run checks from the respective folders:
 
 # mindmitra-app
 npm run typecheck
+npm run test:auth
+npm run test:voice
+npm run test:activities
 ```
 
 PostgreSQL integration tests require `TEST_DATABASE_URL` pointing to a separate,
@@ -211,7 +300,8 @@ skipped. Never point the integration suite at production. The
 | --- | --- |
 | Backend rejects its database role | Use non-owner `app_runtime`, not the migration URL |
 | Missing tables/vector extension | Run Alembic against the correct new database as owner |
-| Firebase authentication fails | Match project IDs and configure valid Admin credentials |
+| Neon authentication fails | Check the Auth URL, trusted origins, provider callbacks, and issuer/audience/JWKS settings |
+| Native sign-in cannot return | Rebuild with the `mindmitra` scheme and configure the hosted web URL and backend handoff key |
 | Phone cannot connect | Check its HTTPS backend URL and WebSocket forwarding |
 | Live returns `503` | Configure the server key, enable Live and verify model access |
 | Native audio/encryption unavailable | Rebuild the native development app; do not use Expo Go |

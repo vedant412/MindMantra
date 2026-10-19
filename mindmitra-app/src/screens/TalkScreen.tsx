@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView, Platform } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { LiveVoice } from '../services/liveVoice';
 import { ApiService } from '../services/api';
@@ -33,16 +33,17 @@ export const TalkScreen = () => {
     <Text style={styles.note}>Audio is streamed, never recorded. Transcripts and memory are saved only when enabled in Profile.</Text>
     <View style={styles.languages}>{[['en', 'English'], ['hi', 'हिंदी'], ['mr', 'मराठी']].map(([id, label]) =>
       <TouchableOpacity key={id} disabled={state !== 'idle'} onPress={() => { setLanguage(id); ApiService.resetSession(); }}><Text style={[styles.language, id === language && { color: colors.primary }]}>{label}</Text></TouchableOpacity>)}</View>
-    <TouchableOpacity style={styles.orb} onPress={() => void toggleVoice()} disabled={state === 'processing'} accessibilityLabel={state === 'idle' ? 'Start voice' : 'Stop voice'}>
-      <Text style={styles.orbLabel}>{state === 'idle' ? 'Start voice' : 'Stop'}</Text>
+    <TouchableOpacity style={styles.orb} onPress={() => void toggleVoice()} disabled={state === 'processing'} accessibilityLabel={state === 'idle' ? 'Start conversation' : 'End conversation'}>
+      <Text style={styles.orbLabel}>{state === 'idle' ? 'Start conversation' : 'End conversation'}</Text>
     </TouchableOpacity>
-    <Text style={styles.status}>{state}</Text>
+    <Text accessibilityLiveRegion="polite" style={styles.status}>{({ idle: 'Ready to talk', connecting: 'Connecting…', listening: 'Listening — just speak', speaking: 'Vani is speaking — you can interrupt', getting_info: 'Getting information…', processing: 'Thinking…' } as Record<string, string>)[state] || state}</Text>
+    <Text style={styles.note}>Start once, then speak naturally. Vani keeps listening between replies. Tap End conversation when you’re finished.</Text>
     {!!error && <Text style={styles.error}>{error}</Text>}
     {!!userText && <Text style={styles.transcript}>You: {userText}</Text>}
     {!!answer && <Text style={styles.answer}>Vani: {answer}</Text>}
     <TextInput style={styles.input} placeholder="Or type a message" value={input} onChangeText={setInput} multiline maxLength={4000} editable={state === 'idle'} />
     <TouchableOpacity style={styles.send} onPress={() => void send()} disabled={state !== 'idle'}><Text style={{ color: 'white' }}>Send message</Text></TouchableOpacity>
-    <Text style={styles.note}>Live voice needs a native development build. Text remains available in Expo Go.</Text>
+    <Text style={styles.note}>{Platform.OS === 'web' ? 'Allow microphone access to stream voice. Keep this tab visible during your conversation.' : 'Live voice needs a native development build. Text remains available in Expo Go.'}</Text>
   </ScrollView>;
 };
 const styles = StyleSheet.create({
@@ -50,7 +51,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 28, fontWeight: '700', color: colors.text }, note: { color: colors.subText, marginVertical: 14, lineHeight: 21 },
   languages: { flexDirection: 'row', justifyContent: 'space-around', marginVertical: 20 }, language: { fontSize: 17, color: colors.subText },
   orb: { width: 160, height: 160, borderRadius: 80, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', alignSelf: 'center' },
-  orbLabel: { color: 'white', fontSize: 22, fontWeight: '600' }, status: { textAlign: 'center', margin: 16, color: colors.subText },
+  orbLabel: { color: 'white', fontSize: 20, fontWeight: '600', textAlign: 'center', paddingHorizontal: 12 }, status: { textAlign: 'center', margin: 16, color: colors.subText },
   error: { color: '#B42318', marginBottom: 14 }, transcript: { color: colors.subText, marginVertical: 10 }, answer: { fontSize: 19, lineHeight: 28, color: colors.text },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: 16, padding: 16, marginTop: 22, color: colors.text },
   send: { backgroundColor: colors.primary, padding: 16, borderRadius: 16, alignItems: 'center', marginTop: 10 },

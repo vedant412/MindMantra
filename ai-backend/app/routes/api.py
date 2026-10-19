@@ -14,6 +14,8 @@ from app.services.analytics import daily_summary, game_trends
 from app.services.conversations import create_conversation, owned_conversation, store_messages
 from app.services.retrieval import assemble_context, SYSTEM_INSTRUCTION
 from app.settings import get_settings
+from app.services.activity_catalog import exercise_points
+from app.services.activity_progress import activity_progress
 from app.contracts import ScreenSync, LocationSync
 
 router = APIRouter()
@@ -125,10 +127,15 @@ def record_game(payload: GameInput, user: Principal = Depends(current_user)):
 
 @router.post("/activities")
 def record_activity(payload: ActivityInput, user: Principal = Depends(current_user)):
-    points = 15 if payload.activity_code == "e4" else 5
+    points = exercise_points(payload.activity_code, payload.duration_ms)
     with user_session(user.id) as db:
         db.execute(insert(ActivityEvent).values(user_id=user.id, event_type="exercise_completed", points=points, **payload.model_dump(), expires_at=now() + timedelta(days=get_settings().structured_data_retention_days)).on_conflict_do_nothing())
         return {"ok": True, "summary": daily_summary(db, user.id)}
+
+@router.get("/activities/progress")
+def get_activity_progress(user: Principal = Depends(current_user)):
+    with user_session(user.id) as db:
+        return activity_progress(db, user.id)
 
 @router.post("/daily-checkin")
 def checkin(payload: CheckinInput, user: Principal = Depends(current_user)):
@@ -158,7 +165,9 @@ def forget_memory(user: Principal = Depends(current_user)):
 @router.delete("/account/data")
 def delete_account_data(user: Principal = Depends(current_user)):
     with user_session(user.id) as db:
-        # Retain only an identity tombstone so the same Firebase token cannot recreate data.
+        # Retain an identity tombstone so the same Neon identity cannot recreate data.
+        from app.models.domain import AuthHandoff
+        db.execute(delete(AuthHandoff).where(AuthHandoff.user_id == user.id))
         for model in (Conversation, ActivityEvent, GameSession, DailyMetric, MemoryFact, ScreenTimeSnapshot, LocationPoint, VisitedPlace):
             db.execute(delete(model).where(model.user_id == user.id))
         db.execute(delete(Profile).where(Profile.user_id == user.id))

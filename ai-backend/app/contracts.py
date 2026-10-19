@@ -3,6 +3,7 @@ from typing import Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from app.services.activity_catalog import GameCode, ExerciseCode
 
 class Contract(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -48,12 +49,13 @@ class RoundResult(Contract):
     reaction_time_ms: int | None = Field(None, ge=0, le=600000)
 
 class GameInput(Contract):
-    game_code: Literal["g1", "g2", "g3", "g4"]
+    game_code: GameCode
+    game_version: Literal["1", "2"] = "1"
     client_session_id: str = Field(min_length=8, max_length=100)
     started_at: datetime
     ended_at: datetime
     score: int = Field(ge=0, le=100)
-    round_results: list[RoundResult] = Field(min_length=1, max_length=5)
+    round_results: list[RoundResult] = Field(min_length=1, max_length=20)
 
     @model_validator(mode="after")
     def valid_times(self):
@@ -64,7 +66,9 @@ class GameInput(Contract):
         from datetime import timezone, timedelta
         if self.ended_at > datetime.now(timezone.utc) + timedelta(minutes=5):
             raise ValueError("Future session")
-        limits = {"g1": 50, "g2": 45, "g3": 50, "g4": 75}
+        limits = {"g1": 50, "g2": 45, "g3": 50, "g4": 75, "gl1": 50, "gl2": 50, "gl3": 50, "gl4": 50, "gl5": 50}
+        if self.game_code.startswith("gl") and self.game_version != "2":
+            raise ValueError("New games require game version 2")
         if self.score > limits[self.game_code] or self.score % 5:
             raise ValueError("Invalid game score")
         from app.services.game_scoring import calculate_game_score
@@ -73,7 +77,7 @@ class GameInput(Contract):
         return self
 
 class ActivityInput(Contract):
-    activity_code: Literal["e1", "e2", "e3", "e4", "e5"]
+    activity_code: ExerciseCode
     client_event_id: str = Field(min_length=8, max_length=100)
     duration_ms: int = Field(ge=0, le=86400000)
 

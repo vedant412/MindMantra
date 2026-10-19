@@ -63,7 +63,7 @@ def test_game_validation():
 
 def test_anonymous_routes_fail_without_contacting_database():
     client = TestClient(app)
-    for route in ("/user-profile", "/daily-summary", "/insights", "/location/insights"):
+    for route in ("/user-profile", "/daily-summary", "/insights", "/location/insights", "/activities/progress"):
         assert client.get(route).status_code == 401
     assert client.get("/audio/old.mp3").status_code == 404
     assert client.get("/perf-stats").status_code == 404

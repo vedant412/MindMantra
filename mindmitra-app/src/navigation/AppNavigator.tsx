@@ -17,6 +17,7 @@ import { TalkScreen } from '../screens/TalkScreen';
 import { InsightsScreen } from '../screens/InsightsScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { TrackingBootstrap } from '../components/TrackingBootstrap';
+import { NativeAuthBridge, isNativeBridge } from '../screens/NativeAuthBridge';
 
 const Tab = createBottomTabNavigator();
 
@@ -36,6 +37,7 @@ const TalkButton = ({ children, onPress }: any) => (
 export const AppNavigator = () => <AuthProvider><AuthenticatedRoot /></AuthProvider>;
 const AuthenticatedRoot = () => {
   const { user, loading } = useAuth();
+  if (isNativeBridge()) return <NativeAuthBridge />;
   if (loading) return <ActivityIndicator />;
   if (!user) return <LoginScreen />;
   return <ActivityProvider key={user.uid}><CognitiveScoreProvider><MainApp /></CognitiveScoreProvider></ActivityProvider>;

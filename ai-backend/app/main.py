@@ -6,6 +6,7 @@ from app.db.database import engine
 from app.settings import get_settings
 from app.routes.api import router as api_router
 from app.routes.live import router as live_router
+from app.routes.auth import router as auth_router
 
 @asynccontextmanager
 async def lifespan(app):
@@ -21,6 +22,7 @@ app = FastAPI(title="MindMitra", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=get_settings().cors_allowed_origins.split(','), allow_credentials=False, allow_methods=["GET", "POST", "DELETE"], allow_headers=["Authorization", "Content-Type"])
 app.include_router(api_router)
 app.include_router(live_router)
+app.include_router(auth_router)
 
 @app.get('/health')
 def health():

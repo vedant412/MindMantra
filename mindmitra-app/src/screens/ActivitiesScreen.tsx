@@ -1,263 +1,86 @@
-import { queueActivity, flushActivityOutbox } from '../services/activityOutbox';
-import { eventId } from '../services/api';
-import React, { useState, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Animated, Modal } from 'react-native';
-import { useRoute } from '@react-navigation/native';
+import React, { useCallback, useRef, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal } from 'react-native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, metrics, shadows } from '../theme/theme';
+import { colors } from '../theme/theme';
 import { useActivityParams } from '../contexts/ActivityContext';
 import { useCognitiveScore } from '../contexts/CognitiveScoreContext';
 import { GameEngine, GameResult } from '../components/GameEngine';
-import { ExerciseEngine } from '../components/ExerciseEngine';
-
-type ActivityItem = {
-  id: string;
-  title: string;
-  category: 'Games' | 'Exercise';
-  duration: string;
-  color: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  isActive: boolean;
-  description: string;
-  isRecommended?: boolean;
-};
-
-const ALL_ACTIVITIES: ActivityItem[] = [
-  // GAMES (4 Active)
-  { id: 'g1', title: 'Pattern Recall', category: 'Games', duration: '3 min', color: colors.pastel.lavender, icon: 'grid', isActive: true, description: 'Memory-Based: Recall flashed patterns.', isRecommended: true },
-  { id: 'g2', title: 'Tap Reaction Test', category: 'Games', duration: '2 min', color: colors.pastel.blue, icon: 'flash', isActive: true, description: 'Reaction & Speed: Tap as fast as you can.' },
-  { id: 'g3', title: 'Stroop Test', category: 'Games', duration: '5 min', color: colors.pastel.pink, icon: 'color-palette', isActive: true, description: 'Focus & Attention: Match colors to words.' },
-  { id: 'g4', title: 'Number Sequence', category: 'Games', duration: '5 min', color: colors.pastel.green, icon: 'grid', isActive: true, description: 'Speed & Logic: Tap numbers in order.' },
-  // GAMES (5 Locked)
-  { id: 'gl1', title: 'Number Memory', category: 'Games', duration: '5 min', color: colors.border, icon: 'keypad', isActive: false, description: 'Locked: Coming soon.' },
-  { id: 'gl2', title: 'Card Match', category: 'Games', duration: '5 min', color: colors.border, icon: 'albums', isActive: false, description: 'Locked: Coming soon.' },
-  { id: 'gl3', title: 'Speed Sorting', category: 'Games', duration: '5 min', color: colors.border, icon: 'timer', isActive: false, description: 'Locked: Coming soon.' },
-  { id: 'gl4', title: 'Find the Target', category: 'Games', duration: '5 min', color: colors.border, icon: 'search', isActive: false, description: 'Locked: Coming soon.' },
-  { id: 'gl5', title: 'Logic Quiz', category: 'Games', duration: '5 min', color: colors.border, icon: 'help-circle', isActive: false, description: 'Locked: Coming soon.' },
-
-  // EXERCISES (5 Active)
-  { id: 'e1', title: 'Breathing Exercise', category: 'Exercise', duration: '5 min', color: colors.pastel.blue, icon: 'leaf', isActive: true, description: 'Mental Relaxation: Calm your mind.' },
-  { id: 'e2', title: 'Journaling', category: 'Exercise', duration: '10 min', color: colors.pastel.lavender, icon: 'book', isActive: true, description: 'Cognitive Improvement: Detail your thoughts.', isRecommended: true },
-  { id: 'e3', title: 'Stretching Routine', category: 'Exercise', duration: '15 min', color: colors.pastel.green, icon: 'walk', isActive: true, description: 'Physical + Brain Link: Get up and stretch.' },
-  { id: 'e4', title: 'Focus Timer', category: 'Exercise', duration: '25 min', color: colors.pastel.pink, icon: 'hourglass', isActive: true, description: 'Calm & Focus: Deep sessions.' },
-  { id: 'e5', title: 'Yoga Poses', category: 'Exercise', duration: '15 min', color: colors.pastel.tealDark, icon: 'body', isActive: true, description: 'Mindful Movement: Flow through poses.' },
-  // EXERCISES (5 Locked)
-  { id: 'el1', title: 'Meditation Session', category: 'Exercise', duration: '15 min', color: colors.border, icon: 'body', isActive: false, description: 'Premium / Coming Soon' },
-  { id: 'el2', title: 'Body Scan', category: 'Exercise', duration: '10 min', color: colors.border, icon: 'scan', isActive: false, description: 'Premium / Coming Soon' },
-  { id: 'el3', title: 'Gratitude Exercise', category: 'Exercise', duration: '5 min', color: colors.border, icon: 'heart', isActive: false, description: 'Premium / Coming Soon' },
-  { id: 'el4', title: 'Memory Recall Practice', category: 'Exercise', duration: '10 min', color: colors.border, icon: 'bulb', isActive: false, description: 'Premium / Coming Soon' },
-  { id: 'el5', title: 'Eye Relaxation', category: 'Exercise', duration: '5 min', color: colors.border, icon: 'eye', isActive: false, description: 'Premium / Coming Soon' }
-];
-
-const TOTAL_ACTIVE_TASKS = ALL_ACTIVITIES.filter(a => a.isActive).length;
+import { ExerciseEngine, ExerciseResult } from '../components/ExerciseEngine';
+import { ACTIVITIES, Activity } from '../services/activityCatalog';
+import { queueActivity, flushActivityOutbox } from '../services/activityOutbox';
+import { eventId } from '../services/api';
+import { authenticatedUid } from '../services/identity';
 
 export const ActivitiesScreen = () => {
-  const [activeTab, setActiveTab] = useState<'Games' | 'Exercise'>('Games');
-  const [activeActivity, setActiveActivity] = useState<ActivityItem | null>(null);
-  const startedAt = useRef(new Date().toISOString());
+  const [tab, setTab] = useState<'Games' | 'Exercise'>('Games');
+  const [active, setActive] = useState<Activity | null>(null);
+  const [notice, setNotice] = useState('');
   const completionId = useRef(eventId());
-  const savingRef = useRef(false);
-  React.useEffect(() => { void flushActivityOutbox().catch(() => {}); }, []);
-  const tabScaleX = useRef(new Animated.Value(1)).current;
-
-  // Global Sync Context
-  const { completedTasks, markCompleted, dailyPoints } = useActivityParams();
+  const saving = useRef(false);
+  const { completedTasks, dailyPoints, loaded, progressError, refresh, markCompleted } = useActivityParams();
   const { addCompletedGame, addCompletedExercise } = useCognitiveScore();
   const route = useRoute<any>();
-
+  const navigation = useNavigation<any>();
+  const open = useCallback((activity: Activity) => { completionId.current = eventId(); setNotice(''); setTab(activity.category); setActive(activity); }, []);
   React.useEffect(() => {
-    if (route.params?.activityId) {
-      const act = ALL_ACTIVITIES.find(a => a.id === route.params.activityId);
-      if (act && act.isActive) {
-        setActiveTab(act.category);
-        setTimeout(() => setActiveActivity(act), 500); 
-      }
-    }
-  }, [route.params?.activityId]);
-
-  const startAnimation = () => {
-    Animated.sequence([
-      Animated.timing(tabScaleX, { toValue: 1.05, duration: 100, useNativeDriver: true }),
-      Animated.timing(tabScaleX, { toValue: 1, duration: 100, useNativeDriver: true })
-    ]).start();
-  };
-
-  const handleTabChange = (tab: 'Games' | 'Exercise') => {
-    setActiveTab(tab);
-    startAnimation();
-  };
-
-  const handleStartActivity = (activity: ActivityItem) => {
-    if (!activity.isActive) {
-      Alert.alert('Locked 🔒', 'This activity will be available soon.');
-      return;
-    }
-    startedAt.current = new Date().toISOString();
-    completionId.current = eventId();
-    setActiveActivity(activity);
-  };
-
-  const handleTaskCompleted = async (points: number, feedback: string, result?: GameResult) => {
-    if (!activeActivity || savingRef.current) return;
-    savingRef.current = true;
+    const item = ACTIVITIES.find(value => value.id === route.params?.activityId);
+    if (item) { open(item); navigation.setParams({ activityId: undefined }); }
+  }, [route.params?.activityId, navigation, open]);
+  useFocusEffect(useCallback(() => {
+    let current = true;
+    void flushActivityOutbox().catch(() => {}).then(() => { if (current) void refresh().catch(() => {}); });
+    return () => { current = false; };
+  }, [refresh]));
+  const cancel = () => { if (!saving.current) setActive(null); };
+  const complete = async (points: number, feedback: string, result: GameResult | ExerciseResult) => {
+    if (!active || saving.current) return;
+    const owner = authenticatedUid();
+    saving.current = true;
     try {
-      const synced = await queueActivity(activeActivity.category === 'Games' ? 'game' : 'exercise', activeActivity.id, points, result?.started_at ?? startedAt.current, result?.ended_at ?? new Date().toISOString(), completionId.current, result?.round_results);
-      await markCompleted(activeActivity.id, points);
-      if (activeActivity.category === 'Games') addCompletedGame(); else addCompletedExercise();
-      Alert.alert(synced ? 'Task completed' : 'Saved on this device', synced ? feedback : 'Your result will sync when you reconnect.');
-      setActiveActivity(null);
-    } catch { Alert.alert('Could not save result', 'Please try again before closing this activity.'); }
-    finally { savingRef.current = false; }
+      const game = 'round_results' in result;
+      const synced = await queueActivity(game ? 'game' : 'exercise', active.id, points,
+        result.started_at, result.ended_at, game ? result.client_session_id : completionId.current,
+        game ? result.round_results : [], game ? undefined : result.duration_ms);
+      if (authenticatedUid() !== owner) throw new Error('Account changed while saving.');
+      await markCompleted(active.id, points);
+      if (game) addCompletedGame(); else addCompletedExercise();
+      setNotice(synced ? `${active.title} saved. ${feedback}` : `${active.title} is saved in your encrypted device queue. Progress updates after it syncs.`);
+      setActive(null);
+    } finally { saving.current = false; }
   };
-
-  const handleCancelTask = () => {
-    setActiveActivity(null);
-  };
-
-  const filtered = ALL_ACTIVITIES.filter(a => a.category === activeTab);
-  
-  // Mathematical logic clamp preventing overflow in trackers
-  const clampedCompleted = Math.min(completedTasks.length, TOTAL_ACTIVE_TASKS);
-  const progressPercent = Math.min(100, (clampedCompleted / TOTAL_ACTIVE_TASKS) * 100);
-
-  if (activeActivity) {
-    return (
-      <Modal visible={true} animationType="slide" presentationStyle="pageSheet">
-        {activeActivity.category === 'Games' ? (
-          <GameEngine 
-            gameId={activeActivity.id} 
-            gameTitle={activeActivity.title} 
-            onComplete={handleTaskCompleted} 
-            onCancel={handleCancelTask} 
-          />
-        ) : (
-          <ExerciseEngine 
-            exerciseId={activeActivity.id} 
-            exerciseTitle={activeActivity.title} 
-            onComplete={handleTaskCompleted} 
-            onCancel={handleCancelTask} 
-          />
-        )}
-      </Modal>
-    );
-  }
-
-  return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>Mental Health</Text>
-          <View style={styles.streakBadge}>
-            <Ionicons name="flame" size={14} color="#FF8A00" />
-            <Text style={styles.streakText}>3-day streak!  |  🏆 {dailyPoints} pts</Text>
-          </View>
-        </View>
-        <View style={{ width: 48 }} />
+  const completed = completedTasks.filter(id => ACTIVITIES.some(activity => activity.id === id));
+  return <View style={styles.page}>
+    <ScrollView contentContainerStyle={styles.content}>
+      <Text style={styles.title}>Activities</Text>
+      <Text style={styles.note}>Choose a game or a mindful break. All 19 activities are available.</Text>
+      <View style={styles.progress}>
+        <Text style={styles.progressTitle}>{loaded ? `${completed.length} of ${ACTIVITIES.length} tried today · ${dailyPoints} points` : 'Loading your progress…'}</Text>
+        <View style={styles.track}><View style={[styles.fill, { width: `${completed.length / ACTIVITIES.length * 100}%` }]} /></View>
+        <Text style={styles.note}>Pick what suits you; you do not need to finish the whole list.</Text>
       </View>
-      
-      <View style={styles.progressContainer}>
-        <Text style={styles.progressText}>Completed today: {clampedCompleted} / {TOTAL_ACTIVE_TASKS}</Text>
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${progressPercent}%` }]} />
-        </View>
-      </View>
-
-      <Animated.View style={[styles.tabs, { transform: [{ scaleX: tabScaleX }] }]}>
-        {(['Games', 'Exercise'] as const).map(tab => (
-          <TouchableOpacity 
-            key={tab} 
-            style={[styles.tab, activeTab === tab && styles.activeTab]}
-            onPress={() => handleTabChange(tab)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>{tab}</Text>
-          </TouchableOpacity>
-        ))}
-      </Animated.View>
-
-      <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
-        {filtered.map((act) => (
-          <TouchableOpacity
-            key={act.id}
-            style={[
-              styles.card,
-              completedTasks.includes(act.id) && styles.completedCard,
-              !act.isActive && styles.lockedCard
-            ]}
-            activeOpacity={act.isActive ? 0.7 : 0.9}
-            onPress={() => handleStartActivity(act)}
-          >
-            <View style={[styles.iconContainer, { backgroundColor: act.isActive ? act.color : '#EEE' }]}>
-              <Ionicons name={act.icon} size={28} color={act.isActive ? colors.text : '#AAA'} />
-            </View>
-            <View style={styles.cardContent}>
-              <View style={styles.cardTitleRow}>
-                <Text style={[styles.cardTitle, !act.isActive && styles.lockedText]}>{act.title}</Text>
-                {act.isRecommended && (
-                  <View style={styles.recommendedBadge}>
-                    <Text style={styles.recommendedText}>AI Pick</Text>
-                  </View>
-                )}
-              </View>
-              <Text style={[styles.cardSubtitle, !act.isActive && styles.lockedText]} numberOfLines={1}>
-                {completedTasks.includes(act.id) ? 'Completed today' : act.description}
-              </Text>
-            </View>
-            {completedTasks.includes(act.id) ? (
-              <View style={styles.doneBtn}>
-                <Ionicons name="checkmark" size={18} color="#fff" />
-              </View>
-            ) : act.isActive ? (
-              <View style={styles.playBtn}>
-                <Ionicons name="play" size={18} color={colors.text} style={{ marginLeft: 2 }} />
-              </View>
-            ) : (
-              <View style={styles.lockedBtn}>
-                <Ionicons name="lock-closed" size={18} color="#AAA" />
-              </View>
-            )}
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-    </View>
-  );
+      {!!progressError && <View style={styles.message}><Text accessibilityRole="alert">{progressError}</Text><TouchableOpacity accessibilityRole="button" onPress={() => { void refresh().catch(() => {}); }}><Text style={styles.link}>Retry progress</Text></TouchableOpacity></View>}
+      {!!notice && <Text accessibilityLiveRegion="polite" style={styles.message}>{notice}</Text>}
+      <View style={styles.tabs}>{(['Games', 'Exercise'] as const).map(value => <TouchableOpacity key={value} accessibilityRole="tab" accessibilityState={{ selected: tab === value }} onPress={() => setTab(value)} style={[styles.tab, tab === value && styles.selected]}><Text style={styles.tabText}>{value === 'Exercise' ? 'Exercises' : value} ({ACTIVITIES.filter(item => item.category === value).length})</Text></TouchableOpacity>)}</View>
+      {ACTIVITIES.filter(item => item.category === tab).map(item => <TouchableOpacity key={item.id} accessibilityRole="button" accessibilityLabel={`Start ${item.title}`} onPress={() => open(item)} style={[styles.card, completed.includes(item.id) && styles.done]}>
+        <View style={styles.icon}><Ionicons name={item.icon as keyof typeof Ionicons.glyphMap} size={27} color={colors.accent} /></View>
+        <View style={styles.cardText}><Text style={styles.cardTitle}>{item.title}</Text><Text style={styles.note}>{item.description}</Text><Text style={styles.duration}>{item.duration}{completed.includes(item.id) ? ' · Tried today' : ''}</Text></View>
+        <Ionicons name="play-circle-outline" size={31} color={colors.accent} />
+      </TouchableOpacity>)}
+    </ScrollView>
+    <Modal visible={!!active} animationType="slide" presentationStyle="pageSheet" onRequestClose={cancel}>
+      {active && (active.category === 'Games' ? <GameEngine key={active.id} gameId={active.id} gameTitle={active.title} onComplete={complete} onCancel={cancel} />
+        : <ExerciseEngine key={active.id} exerciseId={active.id} exerciseTitle={active.title} onComplete={complete} onCancel={cancel} />)}
+    </Modal>
+  </View>;
 };
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background, paddingTop: 60 },
-  header: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingHorizontal: metrics.padding, marginBottom: 20 },
-  headerTitle: { fontSize: 22, fontWeight: '800', color: colors.text, marginBottom: 4 },
-  streakBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF4E5', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, alignSelf: 'flex-start' },
-  streakText: { fontSize: 13, fontWeight: '700', color: '#FF8A00', marginLeft: 4 },
-  tabs: { flexDirection: 'row', justifyContent: 'center', marginBottom: 25, paddingHorizontal: 20, gap: 12 },
-  tab: { flex: 1, paddingVertical: 14, borderRadius: 28, backgroundColor: '#FFF', alignItems: 'center', ...shadows.soft },
-  activeTab: { backgroundColor: colors.pastel.lavender },
-  tabText: { fontSize: 15, fontWeight: '700', color: colors.subText },
-  activeTabText: { color: colors.primary },
-  progressContainer: { paddingHorizontal: metrics.padding, marginBottom: 25 },
-  progressText: { fontSize: 14, color: colors.text, marginBottom: 8, fontWeight: '700' },
-  progressTrack: { height: 10, backgroundColor: '#EAEAEA', borderRadius: 999, overflow: 'hidden' },
-  progressFill: { height: '100%', backgroundColor: colors.pastel.tealDark, borderRadius: 999 },
-  list: { paddingHorizontal: metrics.padding, paddingBottom: 150, gap: 16 },
-  card: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    padding: 20, 
-    backgroundColor: '#FFF',
-    borderRadius: metrics.borderRadius,
-    ...shadows.soft
-  },
-  completedCard: { backgroundColor: '#F3FAF6' },
-  lockedCard: { backgroundColor: '#F9F9F9', opacity: 0.8, shadowOpacity: 0 },
-  iconContainer: { width: 60, height: 60, borderRadius: 20, justifyContent: 'center', alignItems: 'center', marginRight: 16 },
-  cardContent: { flex: 1, marginRight: 10, justifyContent: 'center' },
-  cardTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 8, flexWrap: 'wrap' },
-  cardTitle: { fontSize: 16, fontWeight: '800', color: colors.text },
-  lockedText: { color: '#999' },
-  cardSubtitle: { fontSize: 13, color: colors.subText, fontWeight: '600' },
-  recommendedBadge: { backgroundColor: colors.pastel.blue, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6 },
-  recommendedText: { fontSize: 10, fontWeight: '800', color: colors.primary },
-  playBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.pastel.pink, justifyContent: 'center', alignItems: 'center' },
-  doneBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#3DBE7A', justifyContent: 'center', alignItems: 'center' },
-  lockedBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#EAEAEA', justifyContent: 'center', alignItems: 'center' }
+  page: { flex: 1, backgroundColor: colors.background }, content: { padding: 24, paddingTop: 65, paddingBottom: 150, maxWidth: 900, width: '100%', alignSelf: 'center' },
+  title: { fontSize: 29, fontWeight: '800', color: colors.text }, note: { fontSize: 14, lineHeight: 21, color: colors.subText, marginVertical: 6 },
+  progress: { backgroundColor: 'white', padding: 18, borderRadius: 20, marginVertical: 20 }, progressTitle: { fontSize: 16, fontWeight: '700', color: colors.text },
+  track: { height: 8, backgroundColor: colors.border, borderRadius: 4, overflow: 'hidden', marginTop: 14 }, fill: { height: '100%', backgroundColor: colors.accent },
+  tabs: { flexDirection: 'row', gap: 12, marginVertical: 17 }, tab: { flex: 1, padding: 16, borderRadius: 20, backgroundColor: 'white', alignItems: 'center' }, selected: { backgroundColor: colors.pastel.lavender }, tabText: { fontSize: 16, fontWeight: '700', color: colors.text },
+  card: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 17, borderRadius: 23, backgroundColor: 'white', marginBottom: 13 }, done: { backgroundColor: '#F0F8F2' },
+  icon: { width: 48, height: 48, backgroundColor: colors.pastel.blue, borderRadius: 16, alignItems: 'center', justifyContent: 'center' }, cardText: { flex: 1 }, cardTitle: { fontSize: 17, fontWeight: '700', color: colors.text },
+  duration: { fontSize: 12, fontWeight: '600', color: colors.accent, marginTop: 3 }, message: { backgroundColor: colors.pastel.green, color: colors.text, padding: 15, borderRadius: 14, marginVertical: 10, lineHeight: 22 }, link: { color: colors.accent, fontWeight: '700', marginTop: 10 },
 });

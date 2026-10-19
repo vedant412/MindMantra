@@ -19,8 +19,10 @@ class Owned(Entity):
 
 class User(Entity, Base):
     __tablename__ = "users"
-    firebase_uid = Column(Text, nullable=False, unique=True)
+    auth_issuer = Column(Text, nullable=False)
+    auth_subject = Column(Text, nullable=False)
     status = Column(String(20), nullable=False, default="active")
+    __table_args__ = (UniqueConstraint("auth_issuer", "auth_subject", name="uq_users_auth_identity"),)
 
 class Profile(Base):
     __tablename__ = "profiles"
@@ -154,6 +156,12 @@ class LiveTicket(Owned, Base):
     conversation_id = Column(UUID(as_uuid=True), nullable=False)
     used = Column(Boolean, nullable=False, default=False)
     __table_args__ = (ForeignKeyConstraint(["user_id", "conversation_id"], ["conversations.user_id", "conversations.id"], ondelete="CASCADE"),)
+
+class AuthHandoff(Owned, Base):
+    __tablename__ = "auth_handoffs"
+    code_hash = Column(String(64), nullable=False, unique=True)
+    challenge = Column(String(43), nullable=False)
+    encrypted_token = Column(Text, nullable=False)
 
 class ScreenTimeSnapshot(Owned, Base):
     __tablename__ = "screen_time_snapshots"

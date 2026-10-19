@@ -8,6 +8,7 @@ from app.db.database import SessionLocal, user_session
 from app.models.domain import User, Profile, Conversation, Message, RagDocument, RagChunk, EmbeddingProfile, BackgroundJob, MemoryFact, ActivityEvent, GameSession, ScreenTimeSnapshot, LocationPoint, VisitedPlace, LiveTicket, DailyMetric, now
 from app.services.embeddings import embed
 from app.settings import get_settings
+from app.models.domain import AuthHandoff
 
 async def process_job(user_id):
     settings = get_settings()
@@ -78,7 +79,7 @@ async def run_once():
         users = db.scalars(select(User.id).where(User.status == "active")).all()
     for user_id in users:
         with user_session(user_id) as db:
-            for model in (Conversation, Message, MemoryFact, RagDocument, RagChunk, ActivityEvent, GameSession, ScreenTimeSnapshot, LocationPoint, VisitedPlace, LiveTicket, BackgroundJob):
+            for model in (Conversation, Message, MemoryFact, RagDocument, RagChunk, ActivityEvent, GameSession, ScreenTimeSnapshot, LocationPoint, VisitedPlace, LiveTicket, BackgroundJob, AuthHandoff):
                 db.execute(delete(model).where(model.user_id == user_id, model.expires_at <= now()))
             db.query(BackgroundJob).filter(BackgroundJob.user_id == user_id, BackgroundJob.status == "processing", BackgroundJob.available_at <= now()).update({"status": "pending"})
             cutoff = now().date() - timedelta(days=get_settings().structured_data_retention_days)

@@ -10,5 +10,5 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_runtime;
 REVOKE ALL ON alembic_version FROM app_runtime;
 REVOKE INSERT, UPDATE, DELETE ON embedding_profiles FROM app_runtime;
-GRANT EXECUTE ON FUNCTION auth_resolve_user(text,text,integer) TO app_runtime;
+GRANT EXECUTE ON FUNCTION auth_resolve_user(text,text,text,integer) TO app_runtime;
 -- Do not grant the owner role to app_runtime. Reapply reviewed grants after migrations.

@@ -1,116 +1,55 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert } from 'react-native';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
-import { auth, isMockMode } from '../config/firebase';
-import { useAuth } from '../contexts/AuthContext';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Platform, ScrollView } from 'react-native';
+import { signInEmail, signUpEmail, signInOAuth, continueInBrowser, isAuthConfigured } from '../services/neonSession';
+import { OAuthProvider } from '../services/authState';
 import { colors } from '../theme/theme';
 
 export const LoginScreen = () => {
-  const { mockLogin } = useAuth();
-  
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-
-  const handleAuth = async () => {
-    if (!email || !password) {
-      setError('Please enter both email and password.');
-      return;
-    }
-
-    if (isMockMode || !auth) {
-      setError('Firebase is not configured. Add the public Firebase client configuration to sign in.');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-
-    try {
-      if (isLogin) {
-        await signInWithEmailAndPassword(auth, email, password);
-      } else {
-        await createUserWithEmailAndPassword(auth, email, password);
-      }
-    } catch (err: any) {
-      const msg = err.message || 'Authentication failed.';
-      setError(msg.replace('Firebase: ', '').replace(/\(auth\/.*\)/, '').trim());
-    } finally {
-      setLoading(false);
-    }
+  const [notice, setNotice] = useState('');
+  const run = async (action: () => Promise<unknown>) => {
+    if (loading) return;
+    setLoading(true); setError(''); setNotice('');
+    try { await action(); } catch (e: any) { setError(e.message || 'Sign-in failed. Please try again.'); }
+    finally { setLoading(false); }
   };
-
-  const handleMockLogin = async () => {
-    try {
-      setLoading(true);
-      const randomUid = 'mock_' + Math.random().toString(36).substring(2, 10);
-      await mockLogin(randomUid);
-    } catch (e: any) {
-      console.warn("Mock Login Error:", e);
-      setError(`Login Failed: ${e.message}`);
-      setLoading(false);
-    }
-  };
-
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>MindMitra.</Text>
-      <Text style={styles.subtitle}>Your AI companion for cognitive wellness.</Text>
-
-      <View style={styles.card}>
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-        <TextInput
-          style={styles.input}
-          placeholder="Email"
-          placeholderTextColor={colors.subText}
-          value={email}
-          onChangeText={setEmail}
-          autoCapitalize="none"
-          keyboardType="email-address"
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Password"
-          placeholderTextColor={colors.subText}
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-        />
-
-        <TouchableOpacity 
-          style={[styles.authButton, loading && styles.authButtonDisabled]} 
-          onPress={handleAuth} 
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator color={colors.background} />
-          ) : (
-            <Text style={styles.authButtonText}>{isLogin ? 'Sign In' : 'Create Account'}</Text>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={() => setIsLogin(!isLogin)} style={styles.toggleBtn}>
-          <Text style={styles.toggleText}>
-            {isLogin ? "Don't have an account? Sign Up" : "Already have an account? Sign In"}
-          </Text>
-        </TouchableOpacity>
-
-        {isMockMode && (
-          <View style={styles.mockContainer}>
-            <Text style={styles.mockText}>Firebase is not configured. Sign-in requires a configured Firebase project.</Text>
-          </View>
-        )}
-      </View>
+  const emailAuth = () => run(async () => {
+    if (Platform.OS !== 'web') { await continueInBrowser(); return; }
+    if (!email.trim() || !password || (!isLogin && !name.trim())) throw new Error('Complete all fields.');
+    if (isLogin) await signInEmail(email.trim(), password);
+    else if (!await signUpEmail(name.trim(), email.trim(), password)) setNotice('Check your email to verify your account, then sign in.');
+    setPassword('');
+  });
+  const oauth = (provider: OAuthProvider) => run(() => signInOAuth(provider));
+  return <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+    <Text style={styles.title}>MindMitra.</Text>
+    <Text style={styles.subtitle}>Your AI companion for cognitive wellness.</Text>
+    <View style={styles.card}>
+      <Text style={{ color: colors.text, fontSize: 24, fontWeight: '700', marginBottom: 16 }}>{isLogin ? 'Welcome back' : 'Create your account'}</Text>
+      {!isAuthConfigured() && <Text style={styles.errorText}>Neon Auth setup is required. Configure the public Neon Auth URL{Platform.OS !== 'web' ? ' and hosted sign-in website' : ''}.</Text>}
+      {!!error && <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text>}
+      {!!notice && <Text style={styles.mockText}>{notice}</Text>}
+      {Platform.OS === 'web' && <>
+        {!isLogin && <TextInput style={styles.input} placeholder="Name" value={name} onChangeText={setName} autoComplete="name" />}
+        <TextInput style={styles.input} placeholder="Email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email" />
+        <TextInput style={styles.input} placeholder="Password" value={password} onChangeText={setPassword} secureTextEntry autoComplete={isLogin ? 'current-password' : 'new-password'} onSubmitEditing={emailAuth} />
+      </>}
+      <TouchableOpacity style={[styles.authButton, loading && styles.authButtonDisabled]} onPress={emailAuth} disabled={loading || !isAuthConfigured()}>
+        {loading ? <ActivityIndicator color={colors.background} /> : <Text style={styles.authButtonText}>{Platform.OS !== 'web' ? 'Continue with email in browser' : isLogin ? 'Sign In' : 'Create Account'}</Text>}
+      </TouchableOpacity>
+      {(['google', 'github'] as OAuthProvider[]).map(provider => <TouchableOpacity key={provider} style={styles.toggleBtn} disabled={loading || !isAuthConfigured()} onPress={() => oauth(provider)}><Text style={styles.toggleText}>Continue with {provider === 'google' ? 'Google' : 'GitHub'}</Text></TouchableOpacity>)}
+      {Platform.OS === 'web' && <TouchableOpacity disabled={loading} onPress={() => { setIsLogin(!isLogin); setError(''); }} style={styles.toggleBtn}><Text style={styles.toggleText}>{isLogin ? 'New here? Create an account' : 'Already have an account? Sign in'}</Text></TouchableOpacity>}
     </View>
-  );
+  </ScrollView>;
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background, padding: 32, justifyContent: 'center' },
+  container: { flexGrow: 1, backgroundColor: colors.background, padding: 32, justifyContent: 'center' },
   title: { fontSize: 40, fontWeight: '800', color: colors.primary, marginBottom: 8, letterSpacing: -0.5 },
   subtitle: { fontSize: 16, color: colors.subText, marginBottom: 40, lineHeight: 24, fontWeight: '400', paddingRight: 20 },
   card: { backgroundColor: colors.card, padding: 28, borderRadius: 28, elevation: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.08, shadowRadius: 24 },

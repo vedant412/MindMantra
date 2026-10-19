@@ -1,80 +1,37 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { openUserDatabase } from '../services/localDatabase';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { AppState, Platform } from 'react-native';
+import { ApiService } from '../services/api';
 
-type ActivityState = {
-  completedIds: string[];
-  dailyPoints: number;
-  totalPoints: number;
-  lastResetDate: string;
-};
-
-type ActivityContextType = {
-  completedTasks: string[];
-  totalPoints: number;
-  dailyPoints: number;
-  markCompleted: (taskId: string, pointsEarned: number) => void;
-};
-
-const ActivityContext = createContext<ActivityContextType>({} as ActivityContextType);
-
+type Progress = { completed_ids: string[]; daily_points: number; total_points: number; date: string; timezone: string };
+type Context = { completedTasks: string[]; dailyPoints: number; totalPoints: number; loaded: boolean; progressError: string;
+  refresh: () => Promise<void>; markCompleted: (taskId: string, points: number) => Promise<void> };
+const ActivityContext = createContext<Context>({} as Context);
 export const ActivityProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [state, setState] = useState<ActivityState>({
-    completedIds: [],
-    dailyPoints: 0,
-    totalPoints: 0,
-    lastResetDate: new Date().toISOString().split('T')[0],
-  });
-
-  useEffect(() => {
-    loadState();
-  }, []);
-
-  const loadState = async () => {
+  const [progress, setProgress] = useState<Progress>({ completed_ids: [], daily_points: 0, total_points: 0, date: '', timezone: 'Asia/Kolkata' });
+  const [loaded, setLoaded] = useState(false);
+  const [progressError, setError] = useState('');
+  const revision = useRef(0);
+  const refresh = useCallback(async () => {
+    const version = ++revision.current;
     try {
-      const db = await openUserDatabase('activity.db');
-      await db.execAsync('CREATE TABLE IF NOT EXISTS activity_state (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)');
-      const row = await db.getFirstAsync<{ payload: string }>('SELECT payload FROM activity_state WHERE id = 1');
-      const stored = row?.payload;
-      if (stored) {
-        const parsed: ActivityState = JSON.parse(stored);
-        const today = new Date().toISOString().split('T')[0];
-        if (parsed.lastResetDate !== today) {
-          // Reset daily stats
-          const resetState = { ...parsed, completedIds: [], dailyPoints: 0, lastResetDate: today };
-          setState(resetState);
-          await db.runAsync('INSERT OR REPLACE INTO activity_state(id,payload) VALUES (1,?)', JSON.stringify(resetState));
-        } else {
-          setState(parsed);
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to load activity state');
+      const result = await ApiService.getActivityProgress();
+      if (version === revision.current) { setProgress(result); setLoaded(true); setError(''); }
+    } catch (error) {
+      if (version === revision.current) setError('Progress is unavailable. Reconnect to refresh your saved activities.');
+      throw error;
     }
-  };
-
-  const markCompleted = async (taskId: string, pointsEarned: number) => {
-    const newState = { ...state, completedIds: [...state.completedIds] };
-    if (!newState.completedIds.includes(taskId)) {
-      newState.completedIds.push(taskId);
-    }
-    newState.dailyPoints += pointsEarned;
-    newState.totalPoints += pointsEarned;
-    setState(newState);
-    const db = await openUserDatabase('activity.db');
-    await db.execAsync('CREATE TABLE IF NOT EXISTS activity_state (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)');
-    await db.runAsync('INSERT OR REPLACE INTO activity_state(id,payload) VALUES (1,?)', JSON.stringify(newState));
-  };
-
-  return (
-    <ActivityContext.Provider value={{
-      completedTasks: state.completedIds,
-      totalPoints: state.totalPoints,
-      dailyPoints: state.dailyPoints,
-      markCompleted
-    }}>
-      {children}
-    </ActivityContext.Provider>
-  );
+  }, []);
+  useEffect(() => {
+    const update = () => { void refresh().catch(() => {}); };
+    update();
+    const subscription = AppState.addEventListener('change', state => { if (state === 'active') update(); });
+    if (Platform.OS === 'web') window.addEventListener('focus', update);
+    return () => { ++revision.current; subscription.remove(); if (Platform.OS === 'web') window.removeEventListener('focus', update); };
+  }, [refresh]);
+  // The completion count/points are always reloaded from SQL, not recalculated
+  // from client callbacks. Retrying a save cannot award points twice locally.
+  const markCompleted = async (_taskId: string, _points: number) => { await refresh().catch(() => {}); };
+  return <ActivityContext.Provider value={{ completedTasks: progress.completed_ids, dailyPoints: progress.daily_points,
+    totalPoints: progress.total_points, loaded, progressError, refresh, markCompleted }}>{children}</ActivityContext.Provider>;
 };
-
 export const useActivityParams = () => useContext(ActivityContext);

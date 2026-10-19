@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Animated, KeyboardAvoidingView, Platform, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Animated, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator } from 'react-native';
 import { colors } from '../theme/theme';
 import { useAuth } from '../contexts/AuthContext';
 import { ApiService } from '../services/api';
@@ -26,10 +26,13 @@ export const OnboardingScreen = () => {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [currentText, setCurrentText] = useState('');
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const savingRef = useRef(false);
   
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
   const handleNext = (overrideAnswer?: string) => {
+    if (savingRef.current) return;
     const finalAnswer = overrideAnswer || currentText;
     if (!finalAnswer.trim()) return;
 
@@ -49,6 +52,8 @@ export const OnboardingScreen = () => {
   };
 
   const handlePrev = () => {
+    if (savingRef.current) return;
+    setSaveError('');
     if (step > 0) {
       Animated.timing(fadeAnim, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
         const prevStep = step - 1;
@@ -59,14 +64,21 @@ export const OnboardingScreen = () => {
     }
   };
 
-  const finishOnboarding = async (finalAnswers: any) => {
+  const finishOnboarding = async (finalAnswers: Record<string, string>) => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaveError('');
     setSaving(true);
     // Send to backend endpoint
     try {
       await ApiService.submitUserProfile(finalAnswers);
       await completeOnboarding();
-    } catch { Alert.alert('Could not save', 'Check your connection and try again.'); }
-    finally { setSaving(false); }
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Could not save your profile. Please try again.');
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
   };
 
   const q = QUESTIONS[step];
@@ -80,6 +92,7 @@ export const OnboardingScreen = () => {
         ))}
       </View>
 
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
       <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
         <Text style={styles.title}>{q.title}</Text>
         
@@ -89,7 +102,8 @@ export const OnboardingScreen = () => {
               <TouchableOpacity 
                 key={opt}
                 style={[styles.optionCard, currentText === opt && styles.optionCardActive]}
-                onPress={() => setCurrentText(opt)}
+                disabled={saving}
+                onPress={() => { setCurrentText(opt); setSaveError(''); }}
               >
                 <Text style={[styles.optionText, currentText === opt && styles.optionTextActive]}>{opt}</Text>
               </TouchableOpacity>
@@ -101,13 +115,21 @@ export const OnboardingScreen = () => {
             placeholder={q.placeholder}
             placeholderTextColor={colors.subText + '80'}
             value={currentText}
-            onChangeText={setCurrentText}
+            editable={!saving}
+            onChangeText={value => { setCurrentText(value); setSaveError(''); }}
             autoFocus={true}
             returnKeyType={step === QUESTIONS.length - 1 ? 'done' : 'next'}
             onSubmitEditing={() => handleNext()}
           />
         )}
         
+        {!!saveError && (
+          <View style={styles.errorBox} accessibilityRole="alert" accessibilityLiveRegion="assertive">
+            <Text style={styles.errorTitle}>Your profile wasn’t saved</Text>
+            <Text style={styles.errorText}>{saveError}</Text>
+            <Text style={styles.errorText}>Your answers are still here. Retry when the connection is available.</Text>
+          </View>
+        )}
         <View style={styles.navRow}>
           {step > 0 ? (
             <TouchableOpacity 
@@ -125,13 +147,17 @@ export const OnboardingScreen = () => {
             style={[styles.btn, { flex: 2 }, !currentText.trim() && styles.btnDisabled]} 
             onPress={() => handleNext()}
             disabled={!currentText.trim() || saving}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !currentText.trim() || saving, busy: saving }}
           >
+            {saving && <ActivityIndicator color={colors.background} />}
             <Text style={styles.btnText}>
-              {saving ? 'Wait...' : (step === QUESTIONS.length - 1 ? 'Get Started' : 'Next')}
+              {saving ? 'Saving profile...' : (step === QUESTIONS.length - 1 ? (saveError ? 'Retry' : 'Get Started') : 'Next')}
             </Text>
           </TouchableOpacity>
         </View>
       </Animated.View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 };
@@ -142,6 +168,10 @@ const styles = StyleSheet.create({
   progressDot: { height: 6, width: 30, borderRadius: 3, backgroundColor: colors.border },
   progressDotActive: { backgroundColor: colors.accent },
   content: { flex: 1, justifyContent: 'center' },
+  scrollContent: { flexGrow: 1, paddingBottom: 16 },
+  errorBox: { marginTop: 16, marginBottom: 8, padding: 14, borderRadius: 12, backgroundColor: '#FFF1F0', borderWidth: 1, borderColor: '#FDA29B' },
+  errorTitle: { color: '#912018', fontWeight: '700', fontSize: 15, marginBottom: 4 },
+  errorText: { color: '#912018', fontSize: 14, lineHeight: 20 },
   title: { fontSize: 28, fontWeight: '700', color: colors.text, marginBottom: 40, lineHeight: 38 },
   input: { fontSize: 24, color: colors.primary, borderBottomWidth: 2, borderBottomColor: colors.primary, paddingVertical: 10, marginBottom: 50, fontWeight: '500' },
   optionsContainer: { gap: 12 },
